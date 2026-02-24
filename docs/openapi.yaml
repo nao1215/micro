@@ -1,0 +1,1361 @@
+openapi: 3.0.3
+info:
+  title: MediaHub API
+  description: |
+    CQRS / Event Sourcing / Saga Pattern 学習用メディア管理プラットフォーム。
+
+    すべての `/api/v1/*` エンドポイントは JWT 認証が必要です。
+    開発時は `POST /auth/dev-token` で取得したトークンを `Authorization: Bearer <token>` ヘッダーに設定してください。
+
+    ## アーキテクチャ
+    - **Gateway (8080)**: 外部からの唯一のエントリポイント。JWT 認証後、内部サービスへプロキシ
+    - **media-command (8081)**: メディアの書き込み操作（CQRS Command 側）
+    - **media-query (8082)**: メディアの読み取り操作（CQRS Query 側、Read Model）
+    - **album (8083)**: アルバム管理
+    - **eventstore (8084)**: イベントの永続化と配信
+    - **saga (8085)**: 分散トランザクション（Orchestration Saga）
+    - **notification (8086)**: イベント駆動の通知
+  version: 0.1.0
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+  contact:
+    name: nao1215
+    url: https://github.com/nao1215/micro
+
+servers:
+  - url: http://localhost:8080
+    description: Gateway（開発環境）
+
+tags:
+  - name: auth
+    description: 認証エンドポイント（JWT 不要）
+  - name: user
+    description: ユーザー情報
+  - name: media
+    description: メディア管理（アップロード・一覧・削除）
+  - name: album
+    description: アルバム管理
+  - name: notification
+    description: 通知
+  - name: saga
+    description: Saga 監視
+  - name: event
+    description: イベントログ
+  - name: health
+    description: ヘルスチェック
+  - name: internal-eventstore
+    description: Event Store 内部API（サービス間通信用、ポート 8084）
+  - name: internal-media-command
+    description: media-command 内部API（サービス間通信用、ポート 8081）
+  - name: internal-media-query
+    description: media-query 内部API（サービス間通信用、ポート 8082）
+  - name: internal-album
+    description: album 内部API（サービス間通信用、ポート 8083）
+  - name: internal-saga
+    description: saga 内部API（サービス間通信用、ポート 8085）
+  - name: internal-notification
+    description: notification 内部API（サービス間通信用、ポート 8086）
+
+paths:
+  # ============================================================
+  # Gateway 公開エンドポイント
+  # ============================================================
+  /health:
+    get:
+      tags: [health]
+      summary: ヘルスチェック
+      operationId: healthCheck
+      responses:
+        "200":
+          description: サービス正常
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /auth/dev-token:
+    post:
+      tags: [auth]
+      summary: 開発用トークン発行
+      description: |
+        開発用ユーザーを自動作成し、JWT トークンを返す。
+        本番環境では無効化すべきエンドポイント。
+      operationId: createDevToken
+      responses:
+        "200":
+          description: トークン発行成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DevTokenResponse"
+        "500":
+          description: 内部エラー
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/github:
+    get:
+      tags: [auth]
+      summary: GitHub OAuth2 ログイン開始
+      description: GitHub の認可画面にリダイレクトする。
+      operationId: githubLogin
+      responses:
+        "307":
+          description: GitHub 認可画面へリダイレクト
+        "503":
+          description: GitHub OAuth2 未設定
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/github/callback:
+    get:
+      tags: [auth]
+      summary: GitHub OAuth2 コールバック
+      description: 現在は未実装。開発用トークンを使用してください。
+      operationId: githubCallback
+      parameters:
+        - name: code
+          in: query
+          schema:
+            type: string
+        - name: state
+          in: query
+          schema:
+            type: string
+      responses:
+        "501":
+          description: 未実装
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/google:
+    get:
+      tags: [auth]
+      summary: Google OAuth2 ログイン開始
+      description: Google の認可画面にリダイレクトする。
+      operationId: googleLogin
+      responses:
+        "307":
+          description: Google 認可画面へリダイレクト
+        "503":
+          description: Google OAuth2 未設定
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/google/callback:
+    get:
+      tags: [auth]
+      summary: Google OAuth2 コールバック
+      description: 現在は未実装。開発用トークンを使用してください。
+      operationId: googleCallback
+      parameters:
+        - name: code
+          in: query
+          schema:
+            type: string
+        - name: state
+          in: query
+          schema:
+            type: string
+      responses:
+        "501":
+          description: 未実装
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/me:
+    get:
+      tags: [user]
+      summary: 認証済みユーザー情報取得
+      operationId: getCurrentUser
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: ユーザー情報
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserResponse"
+        "401":
+          description: 未認証
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: ユーザー未登録
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/media:
+    get:
+      tags: [media]
+      summary: メディア一覧取得
+      description: 認証ユーザーのメディア一覧を Read Model から取得する。
+      operationId: listMedia
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: メディア一覧
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MediaListResponse"
+        "401":
+          description: 未認証
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      tags: [media]
+      summary: メディアアップロード
+      description: |
+        画像または動画ファイルをアップロードする（最大 50MB）。
+        アップロード後、Saga によるサムネイル生成・アルバム追加が自動的に開始される。
+      operationId: uploadMedia
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: 画像ファイル（image/*）または動画ファイル（video/*）
+      responses:
+        "201":
+          description: アップロード成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MediaUploadResponse"
+        "400":
+          description: 不正なリクエスト（ファイル未指定、サイズ超過、不正な Content-Type 等）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: 未認証
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/media/{id}:
+    get:
+      tags: [media]
+      summary: メディア詳細取得
+      operationId: getMedia
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/MediaId"
+      responses:
+        "200":
+          description: メディア詳細
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MediaResponse"
+        "404":
+          description: メディアが見つからない
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      tags: [media]
+      summary: メディア削除
+      description: メディアファイルとメタデータを削除し、MediaDeleted イベントを発行する。
+      operationId: deleteMedia
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/MediaId"
+      responses:
+        "200":
+          description: 削除成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+        "404":
+          description: メディアが見つからない
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/albums:
+    get:
+      tags: [album]
+      summary: アルバム一覧取得
+      operationId: listAlbums
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: アルバム一覧
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AlbumResponse"
+    post:
+      tags: [album]
+      summary: アルバム作成
+      operationId: createAlbum
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAlbumRequest"
+      responses:
+        "201":
+          description: 作成成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlbumResponse"
+        "400":
+          description: 不正なリクエスト
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/albums/{id}:
+    get:
+      tags: [album]
+      summary: アルバム詳細取得
+      operationId: getAlbum
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AlbumId"
+      responses:
+        "200":
+          description: アルバム詳細
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlbumResponse"
+        "403":
+          description: アクセス権限なし
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: アルバムが見つからない
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      tags: [album]
+      summary: アルバム削除
+      operationId: deleteAlbum
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AlbumId"
+      responses:
+        "200":
+          description: 削除成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+        "403":
+          description: アクセス権限なし
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/albums/{id}/media:
+    post:
+      tags: [album]
+      summary: アルバムにメディアを追加
+      operationId: addMediaToAlbum
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AlbumId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddMediaToAlbumRequest"
+      responses:
+        "200":
+          description: 追加成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+        "403":
+          description: アクセス権限なし
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/albums/{id}/media/{media_id}:
+    delete:
+      tags: [album]
+      summary: アルバムからメディアを削除
+      operationId: removeMediaFromAlbum
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AlbumId"
+        - name: media_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: メディア ID
+      responses:
+        "200":
+          description: 削除成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+        "403":
+          description: アクセス権限なし
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/notifications:
+    get:
+      tags: [notification]
+      summary: 通知一覧取得
+      operationId: listNotifications
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: 通知一覧
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/NotificationResponse"
+
+  /api/v1/notifications/{id}/read:
+    put:
+      tags: [notification]
+      summary: 通知を既読にする
+      operationId: markNotificationRead
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: 通知 ID
+      responses:
+        "200":
+          description: 既読更新成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  /api/v1/sagas:
+    get:
+      tags: [saga]
+      summary: アクティブな Saga 一覧
+      description: 実行中・補償中の Saga を一覧取得する。
+      operationId: listActiveSagas
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Saga 一覧
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SagaResponse"
+
+  /api/v1/events:
+    get:
+      tags: [event]
+      summary: イベントログ取得
+      description: Event Store に記録された全イベントを取得する。
+      operationId: listEvents
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: イベント一覧
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/EventResponse"
+
+  # ============================================================
+  # Event Store 内部 API（ポート 8084）
+  # ============================================================
+  /internal/eventstore/events:
+    post:
+      tags: [internal-eventstore]
+      summary: イベント追記
+      description: |
+        Event Store にイベントを追記する。バージョンは自動インクリメント。
+        楽観的並行制御により、同一 aggregate_id + version の重複は拒否される。
+      operationId: appendEvent
+      servers:
+        - url: http://localhost:8084
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AppendEventRequest"
+      responses:
+        "201":
+          description: イベント追記成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EventResponse"
+        "409":
+          description: バージョン競合（楽観的並行制御）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    get:
+      tags: [internal-eventstore]
+      summary: 全イベント取得
+      operationId: getAllEvents
+      servers:
+        - url: http://localhost:8084
+      responses:
+        "200":
+          description: イベント一覧
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/EventResponse"
+
+  /internal/eventstore/events/aggregate/{aggregate_id}:
+    get:
+      tags: [internal-eventstore]
+      summary: Aggregate のイベント取得
+      description: 指定した Aggregate ID に紐づく全イベントを取得する（状態復元用）。
+      operationId: getEventsByAggregate
+      servers:
+        - url: http://localhost:8084
+      parameters:
+        - name: aggregate_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: イベント一覧
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/EventResponse"
+
+  /internal/eventstore/events/aggregate/{aggregate_id}/version:
+    get:
+      tags: [internal-eventstore]
+      summary: 最新バージョン取得
+      operationId: getLatestVersion
+      servers:
+        - url: http://localhost:8084
+      parameters:
+        - name: aggregate_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: 最新バージョン
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  aggregate_id:
+                    type: string
+                  latest_version:
+                    type: integer
+                    format: int64
+
+  /internal/eventstore/events/type/{event_type}:
+    get:
+      tags: [internal-eventstore]
+      summary: イベントタイプ別取得
+      description: Saga のイベント購読などに使用する。
+      operationId: getEventsByType
+      servers:
+        - url: http://localhost:8084
+      parameters:
+        - name: event_type
+          in: path
+          required: true
+          schema:
+            type: string
+            enum:
+              - MediaUploaded
+              - MediaProcessed
+              - MediaProcessingFailed
+              - MediaDeleted
+              - MediaUploadCompensated
+              - AlbumCreated
+              - AlbumDeleted
+              - MediaAddedToAlbum
+              - MediaRemovedFromAlbum
+              - NotificationSent
+      responses:
+        "200":
+          description: イベント一覧
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/EventResponse"
+
+  /internal/eventstore/events/since:
+    get:
+      tags: [internal-eventstore]
+      summary: 指定時刻以降のイベント取得
+      description: Read Model のインクリメンタル更新に使用する。
+      operationId: getEventsSince
+      servers:
+        - url: http://localhost:8084
+      parameters:
+        - name: since
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+          description: この時刻以降のイベントを取得（RFC3339 形式）
+      responses:
+        "200":
+          description: イベント一覧
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/EventResponse"
+
+  # ============================================================
+  # media-command 内部 API（ポート 8081）
+  # ============================================================
+  /internal/media-command/media/{id}/process:
+    post:
+      tags: [internal-media-command]
+      summary: サムネイル生成（Saga からの呼び出し）
+      operationId: processMedia
+      servers:
+        - url: http://localhost:8081
+      parameters:
+        - $ref: "#/components/parameters/MediaId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - storage_path
+              properties:
+                storage_path:
+                  type: string
+                  description: アップロード済みファイルのパス
+      responses:
+        "200":
+          description: 処理成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  media_id:
+                    type: string
+                  thumbnail_path:
+                    type: string
+                  width:
+                    type: integer
+                  height:
+                    type: integer
+
+  /internal/media-command/media/{id}/compensate:
+    post:
+      tags: [internal-media-command]
+      summary: 補償アクション（Saga の失敗回復）
+      description: |
+        アップロード済みファイルを削除し、MediaUploadCompensated イベントを発行する。
+      operationId: compensateMedia
+      servers:
+        - url: http://localhost:8081
+      parameters:
+        - $ref: "#/components/parameters/MediaId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - reason
+              properties:
+                reason:
+                  type: string
+                  description: 補償の理由
+                saga_id:
+                  type: string
+                  description: 関連する Saga ID
+      responses:
+        "200":
+          description: 補償成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  # ============================================================
+  # media-query 内部 API（ポート 8082）
+  # ============================================================
+  /internal/media-query/media/search:
+    get:
+      tags: [internal-media-query]
+      summary: メディア検索
+      operationId: searchMedia
+      servers:
+        - url: http://localhost:8082
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+          description: 検索クエリ（ファイル名の部分一致）
+      responses:
+        "200":
+          description: 検索結果
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  media:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/MediaResponse"
+                  count:
+                    type: integer
+                  query:
+                    type: string
+
+  /internal/media-query/internal/rebuild:
+    post:
+      tags: [internal-media-query]
+      summary: Read Model 再構築
+      description: Event Store の全イベントから Read Model を再構築する。
+      operationId: rebuildReadModel
+      servers:
+        - url: http://localhost:8082
+      responses:
+        "200":
+          description: 再構築成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  # ============================================================
+  # album 内部 API（ポート 8083）
+  # ============================================================
+  /internal/album/albums/{id}:
+    put:
+      tags: [internal-album]
+      summary: アルバム更新
+      operationId: updateAlbum
+      servers:
+        - url: http://localhost:8083
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AlbumId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAlbumRequest"
+      responses:
+        "200":
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlbumResponse"
+
+  /internal/album/albums/{id}/media:
+    get:
+      tags: [internal-album]
+      summary: アルバム内メディア一覧
+      operationId: listAlbumMedia
+      servers:
+        - url: http://localhost:8083
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AlbumId"
+      responses:
+        "200":
+          description: メディアID一覧
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    media_id:
+                      type: string
+                      format: uuid
+                    added_at:
+                      type: string
+                      format: date-time
+
+  # ============================================================
+  # saga 内部 API（ポート 8085）
+  # ============================================================
+  /internal/saga/sagas/{id}:
+    get:
+      tags: [internal-saga]
+      summary: Saga 詳細取得（ステップ含む）
+      operationId: getSagaDetail
+      servers:
+        - url: http://localhost:8085
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Saga ID
+      responses:
+        "200":
+          description: Saga 詳細
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SagaDetailResponse"
+        "404":
+          description: Saga が見つからない
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /internal/saga/events/notify:
+    post:
+      tags: [internal-saga]
+      summary: Saga にイベント通知
+      operationId: notifySagaEvent
+      servers:
+        - url: http://localhost:8085
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - event_type
+                - aggregate_id
+              properties:
+                event_type:
+                  type: string
+                aggregate_id:
+                  type: string
+                data:
+                  type: string
+      responses:
+        "200":
+          description: 受理
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: accepted
+
+  # ============================================================
+  # notification 内部 API（ポート 8086）
+  # ============================================================
+  /internal/notification/notifications/unread:
+    get:
+      tags: [internal-notification]
+      summary: 未読通知一覧
+      operationId: listUnreadNotifications
+      servers:
+        - url: http://localhost:8086
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: 未読通知一覧
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/NotificationResponse"
+
+  /internal/notification/notifications/read-all:
+    put:
+      tags: [internal-notification]
+      summary: 全通知を既読にする
+      operationId: markAllNotificationsRead
+      servers:
+        - url: http://localhost:8086
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: 全既読成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  /internal/notification/internal/send:
+    post:
+      tags: [internal-notification]
+      summary: 通知送信（Saga からの内部呼び出し）
+      operationId: sendNotification
+      servers:
+        - url: http://localhost:8086
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SendNotificationRequest"
+      responses:
+        "201":
+          description: 通知送信成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  message:
+                    type: string
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        `POST /auth/dev-token` で取得した JWT トークン。
+        Claims: `{ "user_id": string, "email": string, "exp": number, "iat": number, "iss": "mediahub-gateway" }`
+
+  parameters:
+    MediaId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: メディア ID
+    AlbumId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: アルバム ID
+
+  schemas:
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          description: エラーメッセージ
+      example:
+        error: "リクエストが不正です"
+
+    MessageResponse:
+      type: object
+      properties:
+        message:
+          type: string
+      example:
+        message: "操作が完了しました"
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+        service:
+          type: string
+          example: gateway
+
+    DevTokenResponse:
+      type: object
+      properties:
+        token:
+          type: string
+          description: JWT トークン
+        user_id:
+          type: string
+          format: uuid
+          description: 開発用ユーザーの ID
+
+    UserResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        display_name:
+          type: string
+        avatar_url:
+          type: string
+          format: uri
+        provider:
+          type: string
+          enum: [github, google, dev]
+
+    MediaUploadResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        filename:
+          type: string
+        content_type:
+          type: string
+        size:
+          type: integer
+          format: int64
+        storage_path:
+          type: string
+
+    MediaResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        filename:
+          type: string
+        content_type:
+          type: string
+        size:
+          type: integer
+          format: int64
+        storage_path:
+          type: string
+        thumbnail_path:
+          type: string
+        width:
+          type: integer
+        height:
+          type: integer
+        duration_seconds:
+          type: number
+          format: double
+        status:
+          type: string
+          enum: [uploaded, processed, failed, compensated]
+        uploaded_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    MediaListResponse:
+      type: object
+      properties:
+        media:
+          type: array
+          items:
+            $ref: "#/components/schemas/MediaResponse"
+        count:
+          type: integer
+
+    CreateAlbumRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          description: アルバム名
+        description:
+          type: string
+          description: アルバムの説明
+
+    AddMediaToAlbumRequest:
+      type: object
+      required:
+        - media_id
+      properties:
+        media_id:
+          type: string
+          format: uuid
+          description: 追加するメディアの ID
+
+    AlbumResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    NotificationResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        message:
+          type: string
+        is_read:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+
+    SendNotificationRequest:
+      type: object
+      required:
+        - user_id
+        - title
+        - message
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        message:
+          type: string
+
+    SagaResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        saga_type:
+          type: string
+          description: "Saga の種類（例: media_upload）"
+        current_step:
+          type: string
+        status:
+          type: string
+          enum: [started, in_progress, compensating, completed, failed]
+        payload:
+          type: string
+          description: JSON 文字列
+        started_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    SagaDetailResponse:
+      allOf:
+        - $ref: "#/components/schemas/SagaResponse"
+        - type: object
+          properties:
+            steps:
+              type: array
+              items:
+                $ref: "#/components/schemas/SagaStepResponse"
+
+    SagaStepResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        step_name:
+          type: string
+        status:
+          type: string
+          enum: [pending, executing, completed, failed]
+        result:
+          type: string
+          description: JSON 文字列
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    AppendEventRequest:
+      type: object
+      required:
+        - aggregate_id
+        - aggregate_type
+        - event_type
+        - data
+      properties:
+        aggregate_id:
+          type: string
+          format: uuid
+          description: 対象エンティティの ID
+        aggregate_type:
+          type: string
+          enum: [Media, Album, User]
+          description: Aggregate の種類
+        event_type:
+          type: string
+          enum:
+            - MediaUploaded
+            - MediaProcessed
+            - MediaProcessingFailed
+            - MediaDeleted
+            - MediaUploadCompensated
+            - AlbumCreated
+            - AlbumDeleted
+            - MediaAddedToAlbum
+            - MediaRemovedFromAlbum
+            - NotificationSent
+          description: イベントの種類
+        data:
+          type: object
+          description: イベントデータ（イベントタイプごとに構造が異なる）
+
+    EventResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        aggregate_id:
+          type: string
+          format: uuid
+        aggregate_type:
+          type: string
+        event_type:
+          type: string
+        data:
+          type: object
+          description: イベントデータ（JSON）
+        version:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time

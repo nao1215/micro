@@ -26,7 +26,8 @@ import (
 )
 
 // maxUploadSize はアップロード可能なファイルの最大サイズ（50MB）。
-const maxUploadSize = 50 << 20
+// テスト時に差し替え可能にするためvarとして宣言する。
+var maxUploadSize int64 = 50 << 20
 
 // thumbnailSize はサムネイル画像の幅・高さ（ピクセル）。
 const thumbnailSize = 200

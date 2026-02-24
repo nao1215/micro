@@ -6,7 +6,8 @@ import (
 )
 
 // mediaBaseDir はメディアファイルの保存先ベースディレクトリ。
-const mediaBaseDir = "/data/media"
+// テスト時に差し替え可能にするためvarとして宣言する。
+var mediaBaseDir = "/data/media"
 
 // initStorage はメディアファイルの保存先ディレクトリを作成する。
 // ディレクトリが既に存在する場合は何もしない。
