@@ -7,11 +7,6 @@ CQRS、Event Sourcing、Saga Pattern を学習するためのローカル専用�
 
 > **注意**: このプロジェクトはクラウドサービスを一切使用せず、Docker Compose でローカル環境のみで動作します。
 
-## スポンサー
-
-開発の継続には皆さまのご支援が必要です。
-[![GitHub Sponsors](https://img.shields.io/badge/Sponsor-GitHub-ea4aaa)](https://github.com/sponsors/nao1215)
-
 ## 目次
 
 - [アーキテクチャ概要](#アーキテクチャ概要)
