@@ -110,7 +110,10 @@
             <!-- アルバムパネル -->
             <div id="panel-albums" class="panel">
                 <div class="card">
-                    <h3>アルバム一覧</h3>
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem">
+                        <h3>アルバム一覧</h3>
+                        <button class="btn btn-primary" onclick="createAlbum()">+ 新規アルバム</button>
+                    </div>
                     <div id="album-list">
                         <p style="color: #999; text-align: center; padding: 2rem;">アルバムがありません</p>
                     </div>
@@ -161,36 +164,83 @@
     </div>
 
     <script>
-        const API_BASE = 'http://localhost:8080/api/v1';
+        const GATEWAY = 'http://localhost:8080';
+        const API_BASE = GATEWAY + '/api/v1';
         let token = localStorage.getItem('token');
+        let refreshTimers = [];
 
         // ページ読み込み時の初期化
         document.addEventListener('DOMContentLoaded', () => {
             if (token) {
                 showMainView();
-                checkHealth();
             }
+            checkHealth();
         });
 
-        // 開発モードログイン（デバッグ用）
-        function devLogin() {
-            // TODO: Gateway実装後にdev-tokenエンドポイントを使用する
-            token = 'dev-token';
-            localStorage.setItem('token', token);
-            showMainView();
+        // 共通APIリクエスト
+        async function api(path, options = {}) {
+            const headers = { 'Authorization': 'Bearer ' + token, ...options.headers };
+            const res = await fetch(API_BASE + path, { ...options, headers });
+            return res;
+        }
+
+        // 開発モードログイン（POST /auth/dev-token）
+        async function devLogin() {
+            try {
+                const res = await fetch(GATEWAY + '/auth/dev-token', { method: 'POST' });
+                if (!res.ok) {
+                    const err = await res.json();
+                    alert('ログイン失敗: ' + (err.error || res.statusText));
+                    return;
+                }
+                const data = await res.json();
+                token = data.token;
+                localStorage.setItem('token', token);
+                showMainView();
+            } catch (e) {
+                alert('通信エラー: ' + e.message);
+            }
         }
 
         function logout() {
             token = null;
             localStorage.removeItem('token');
+            refreshTimers.forEach(t => clearInterval(t));
+            refreshTimers = [];
             document.getElementById('auth-view').style.display = '';
             document.getElementById('main-view').style.display = 'none';
         }
 
-        function showMainView() {
+        async function showMainView() {
             document.getElementById('auth-view').style.display = 'none';
             document.getElementById('main-view').style.display = '';
-            document.getElementById('user-name').textContent = '開発ユーザー';
+
+            // ユーザー情報取得
+            try {
+                const res = await api('/me');
+                if (res.ok) {
+                    const user = await res.json();
+                    document.getElementById('user-name').textContent = user.display_name || user.email;
+                } else if (res.status === 401) {
+                    logout();
+                    return;
+                }
+            } catch {
+                document.getElementById('user-name').textContent = '開発ユーザー';
+            }
+
+            // 初回データ読み込み
+            loadMedia();
+            loadAlbums();
+            loadSagas();
+            loadEvents();
+            loadNotifications();
+
+            // 定期更新（5秒間隔）
+            refreshTimers.push(setInterval(loadMedia, 5000));
+            refreshTimers.push(setInterval(loadSagas, 3000));
+            refreshTimers.push(setInterval(loadEvents, 5000));
+            refreshTimers.push(setInterval(loadNotifications, 10000));
         }
 
         // タブ切り替え
@@ -201,7 +251,7 @@
             document.getElementById('panel-' + name).classList.add('active');
         }
 
-        // ファイルアップロード
+        // === メディア ===
         async function uploadFile(file) {
             if (!file) return;
             const formData = new FormData();
@@ -215,6 +265,7 @@
                 if (res.ok) {
                     alert('アップロード成功！Saga処理が開始されます。');
                     loadMedia();
+                    setTimeout(loadSagas, 1000);
                 } else {
                     const err = await res.json();
                     alert('アップロード失敗: ' + (err.error || res.statusText));
@@ -224,17 +275,29 @@
             }
         }
 
-        // メディア一覧読み込み
         async function loadMedia() {
             try {
-                const res = await fetch(API_BASE + '/media', {
-                    headers: { 'Authorization': 'Bearer ' + token },
-                });
+                const res = await api('/media');
                 if (!res.ok) return;
                 const data = await res.json();
-                renderMediaGrid(data);
+                renderMediaGrid(Array.isArray(data) ? data : (data.media || []));
             } catch (e) {
                 console.error('メディア取得エラー:', e);
+            }
+        }
+
+        async function deleteMedia(id) {
+            if (!confirm('このメディアを削除しますか？')) return;
+            try {
+                const res = await api('/media/' + id, { method: 'DELETE' });
+                if (res.ok) {
+                    loadMedia();
+                } else {
+                    const err = await res.json();
+                    alert('削除失敗: ' + (err.error || res.statusText));
+                }
+            } catch (e) {
+                alert('通信エラー: ' + e.message);
             }
         }
 
@@ -246,28 +309,246 @@
             }
             grid.innerHTML = items.map(item => `
                 <div class="media-item">
-                    <img src="${item.thumbnail_path || '/static/placeholder.svg'}" alt="${item.filename}">
+                    <img src="${escapeHtml(item.thumbnail_path || '')}" alt="${escapeHtml(item.filename || '')}"
+                         onerror="this.style.background='#eee';this.style.display='flex';this.alt='No thumbnail'">
                     <div class="info">
-                        <div class="name">${item.filename}</div>
+                        <div class="name">${escapeHtml(item.filename || item.id || '')}</div>
                         <div class="meta">
-                            <span class="status-badge status-${item.status}">${item.status}</span>
-                            ${formatFileSize(item.size)}
+                            <span class="status-badge status-${item.status || 'uploaded'}">${item.status || 'uploaded'}</span>
+                            ${formatFileSize(item.size || item.file_size || 0)}
                         </div>
+                        <button class="btn btn-danger" style="margin-top:0.5rem;padding:0.2rem 0.5rem;font-size:0.7rem" onclick="deleteMedia('${item.id}')">削除</button>
                     </div>
                 </div>
             `).join('');
         }
 
         function formatFileSize(bytes) {
+            if (!bytes) return '';
             if (bytes < 1024) return bytes + ' B';
             if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
             return (bytes / 1048576).toFixed(1) + ' MB';
         }
 
+        // === アルバム ===
+        async function loadAlbums() {
+            try {
+                const res = await api('/albums');
+                if (!res.ok) return;
+                const data = await res.json();
+                renderAlbums(Array.isArray(data) ? data : (data.albums || []));
+            } catch (e) {
+                console.error('アルバム取得エラー:', e);
+            }
+        }
+
+        async function createAlbum() {
+            const name = prompt('アルバム名を入力してください:');
+            if (!name) return;
+            try {
+                const res = await api('/albums', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: name, description: '' }),
+                });
+                if (res.ok) {
+                    loadAlbums();
+                } else {
+                    const err = await res.json();
+                    alert('作成失敗: ' + (err.error || res.statusText));
+                }
+            } catch (e) {
+                alert('通信エラー: ' + e.message);
+            }
+        }
+
+        async function deleteAlbum(id) {
+            if (!confirm('このアルバムを削除しますか？')) return;
+            try {
+                const res = await api('/albums/' + id, { method: 'DELETE' });
+                if (res.ok) {
+                    loadAlbums();
+                } else {
+                    const err = await res.json();
+                    alert('削除失敗: ' + (err.error || res.statusText));
+                }
+            } catch (e) {
+                alert('通信エラー: ' + e.message);
+            }
+        }
+
+        function renderAlbums(albums) {
+            const list = document.getElementById('album-list');
+            if (!albums || albums.length === 0) {
+                list.innerHTML = '<p style="color: #999; text-align: center; padding: 2rem;">アルバムがありません</p>';
+                return;
+            }
+            list.innerHTML = '<button class="btn btn-primary" onclick="createAlbum()" style="margin-bottom:1rem">+ 新規アルバム</button>' +
+                albums.map(a => `
+                    <div style="display:flex;justify-content:space-between;align-items:center;padding:0.75rem;border-bottom:1px solid #eee">
+                        <div>
+                            <strong>${escapeHtml(a.name)}</strong>
+                            <span style="color:#888;font-size:0.8rem;margin-left:0.5rem">${a.description ? escapeHtml(a.description) : ''}</span>
+                            <span style="color:#aaa;font-size:0.75rem;margin-left:0.5rem">${a.media_count != null ? a.media_count + '件' : ''}</span>
+                        </div>
+                        <button class="btn btn-danger" style="padding:0.2rem 0.5rem;font-size:0.7rem" onclick="deleteAlbum('${a.id}')">削除</button>
+                    </div>
+                `).join('');
+        }
+
+        // === Saga監視 ===
+        async function loadSagas() {
+            try {
+                const res = await api('/sagas');
+                if (!res.ok) return;
+                const data = await res.json();
+                renderSagas(Array.isArray(data) ? data : (data.sagas || []));
+            } catch (e) {
+                console.error('Saga取得エラー:', e);
+            }
+        }
+
+        function renderSagas(sagas) {
+            const list = document.getElementById('saga-list');
+            if (!sagas || sagas.length === 0) {
+                list.innerHTML = '<p style="color: #999; text-align: center; padding: 2rem;">アクティブなSagaはありません</p>';
+                return;
+            }
+            list.innerHTML = sagas.map(saga => {
+                const statusClass = saga.status === 'completed' ? 'step-completed' :
+                                    saga.status === 'failed' ? 'step-failed' :
+                                    'step-executing';
+                const statusLabel = saga.status === 'completed' ? '完了' :
+                                    saga.status === 'failed' ? '失敗' :
+                                    saga.status === 'compensating' ? '補償中' : '実行中';
+                const steps = saga.steps || [];
+                return `
+                    <div class="card" style="margin-bottom:0.5rem">
+                        <div style="display:flex;justify-content:space-between;align-items:center">
+                            <strong>${escapeHtml(saga.saga_type || saga.type || 'Saga')}</strong>
+                            <span class="status-badge" style="background:${statusClass === 'step-completed' ? '#d4edda' : statusClass === 'step-failed' ? '#f8d7da' : '#fff3cd'};color:${statusClass === 'step-completed' ? '#155724' : statusClass === 'step-failed' ? '#721c24' : '#856404'}">${statusLabel}</span>
+                        </div>
+                        <div style="font-size:0.8rem;color:#888;margin-top:0.25rem">
+                            ステップ: ${escapeHtml(saga.current_step || '-')} | 開始: ${formatTime(saga.started_at)}
+                        </div>
+                        ${steps.length > 0 ? '<div style="margin-top:0.5rem">' + steps.map(step => `
+                            <div class="saga-step">
+                                <div class="step-icon ${step.status === 'completed' ? 'step-completed' : step.status === 'failed' ? 'step-failed' : step.status === 'executing' ? 'step-executing' : 'step-pending'}">
+                                    ${step.status === 'completed' ? '&#10003;' : step.status === 'failed' ? '&#10007;' : '&#8226;'}
+                                </div>
+                                <span>${escapeHtml(step.step_name || step.name)}</span>
+                                <span style="color:#888;font-size:0.75rem;margin-left:auto">${step.status}</span>
+                            </div>
+                        `).join('') + '</div>' : ''}
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // === イベントログ ===
+        async function loadEvents() {
+            try {
+                const res = await api('/events');
+                if (!res.ok) return;
+                const data = await res.json();
+                renderEvents(Array.isArray(data) ? data : (data.events || []));
+            } catch (e) {
+                console.error('イベント取得エラー:', e);
+            }
+        }
+
+        function renderEvents(events) {
+            const log = document.getElementById('events-log');
+            if (!events || events.length === 0) {
+                log.innerHTML = '<p style="color: #999; text-align: center; padding: 2rem;">イベントがありません</p>';
+                return;
+            }
+            // 新しいイベントを上に表示
+            const sorted = [...events].reverse();
+            log.innerHTML = sorted.map(ev => {
+                let eventData = ev.data;
+                if (typeof eventData === 'string') {
+                    try { eventData = JSON.parse(eventData); } catch { /* keep as string */ }
+                }
+                const dataStr = typeof eventData === 'object' ? JSON.stringify(eventData, null, 2) : String(eventData || '');
+                return `
+                    <div class="event-row">
+                        <div>
+                            <span class="event-type">${escapeHtml(ev.event_type)}</span>
+                            <span style="color:#666;margin-left:0.5rem">[${escapeHtml(ev.aggregate_type || '')}:${escapeHtml((ev.aggregate_id || '').substring(0, 8))}...]</span>
+                            <span style="color:#aaa;margin-left:0.5rem">v${ev.version || '?'}</span>
+                        </div>
+                        <div class="event-time">${formatTime(ev.created_at)}</div>
+                        <details style="margin-top:0.25rem">
+                            <summary style="cursor:pointer;color:#3498db;font-size:0.75rem">データ表示</summary>
+                            <pre style="background:#f8f9fa;padding:0.5rem;border-radius:4px;margin-top:0.25rem;font-size:0.7rem;overflow-x:auto;max-height:200px">${escapeHtml(dataStr)}</pre>
+                        </details>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // === 通知 ===
+        async function loadNotifications() {
+            try {
+                const res = await api('/notifications');
+                if (!res.ok) return;
+                const data = await res.json();
+                renderNotifications(Array.isArray(data) ? data : (data.notifications || []));
+            } catch (e) {
+                console.error('通知取得エラー:', e);
+            }
+        }
+
+        async function markNotificationRead(id) {
+            try {
+                await api('/notifications/' + id + '/read', { method: 'PUT' });
+                loadNotifications();
+            } catch (e) {
+                console.error('既読更新エラー:', e);
+            }
+        }
+
+        function renderNotifications(notifications) {
+            const list = document.getElementById('notification-list');
+            if (!notifications || notifications.length === 0) {
+                list.innerHTML = '<p style="color: #999; text-align: center; padding: 2rem;">通知がありません</p>';
+                return;
+            }
+            list.innerHTML = notifications.map(n => `
+                <div class="notification-item ${n.is_read ? '' : 'unread'}" onclick="markNotificationRead('${n.id}')">
+                    <div class="notification-dot ${n.is_read ? 'read' : ''}"></div>
+                    <div style="flex:1">
+                        <div style="font-weight:${n.is_read ? 'normal' : 'bold'}">${escapeHtml(n.title || n.message || '')}</div>
+                        <div style="font-size:0.8rem;color:#666;margin-top:0.25rem">${escapeHtml(n.message || '')}</div>
+                        <div style="font-size:0.75rem;color:#aaa;margin-top:0.25rem">${formatTime(n.created_at)}</div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // === ユーティリティ ===
+        function escapeHtml(str) {
+            if (!str) return '';
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+
+        function formatTime(ts) {
+            if (!ts) return '';
+            try {
+                const d = new Date(ts);
+                return d.toLocaleString('ja-JP');
+            } catch {
+                return ts;
+            }
+        }
+
         // ヘルスチェック
         async function checkHealth() {
             try {
-                const res = await fetch('http://localhost:8080/health');
+                const res = await fetch(GATEWAY + '/health');
                 if (res.ok) {
                     document.getElementById('connection-status').textContent = 'Gateway: 接続中';
                     document.getElementById('connection-status').style.color = '#2ecc71';
@@ -290,7 +571,7 @@
             });
         }
 
-        // 定期的にヘルスチェック
+        // 定期ヘルスチェック
         setInterval(checkHealth, 10000);
     </script>
 </body>
