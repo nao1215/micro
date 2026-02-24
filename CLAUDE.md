@@ -166,17 +166,26 @@ micro/
 - [x] 共有パッケージ（event型定義、middleware、httpclient）
 - [x] DBスキーマとsqlc設定
 - [x] 各サービスのエントリポイント骨格
+- [x] sqlcによるコード生成（6サービス分）。sqlc v1.30.0はquery.sql内の日本語コメントを処理できないため、`-- name:`アノテーションのみ残した
+- [x] Event Storeサービスの完全実装（イベント永続化・配信API、楽観的並行制御）
+- [x] media-commandサービス実装（ファイルアップロード50MB制限、画像サムネイル200x200生成、補償エンドポイント）
+- [x] media-queryサービス実装（Read Model、Projectorがeventstoreを2秒間隔でポーリング、フルリビルド対応）
+- [x] albumサービス実装（CRUD、デフォルトアルバム自動作成、所有権チェック）
+- [x] sagaサービス実装（Orchestration Saga、eventstoreを3秒間隔でポーリング、補償アクション）
+- [x] notificationサービス実装（通知CRUD、既読管理、内部送信エンドポイント）
+- [x] gatewayサービス実装（OAuth2スタブ、dev-tokenエンドポイント、リバースプロキシ、JWTミドルウェア）
+- [x] フロントエンドUI（デバッグ用HTML、メディア/アルバム/Saga/イベント/通知タブ）
+- [x] ビルド検証通過（`go build ./...` および `go vet ./...`）
 
 ### 未着手
-- [ ] sqlcによるコード生成と各サービスのDB層実装
-- [ ] Event Storeサービスの完全実装（イベント永続化・配信API）
-- [ ] media-commandサービス実装（ファイルアップロード・サムネイル生成）
-- [ ] media-queryサービス実装（Read Model構築・クエリAPI）
-- [ ] albumサービス実装
-- [ ] sagaサービス実装（Orchestration Saga、補償アクション）
-- [ ] notificationサービス実装
-- [ ] gatewayサービス実装（OAuth2、JWT、ルーティング）
-- [ ] フロントエンドUI
-- [ ] Docker環境の動作確認
-- [ ] テストコード
-- [ ] Lint通過確認
+- [ ] Docker環境の動作確認（`docker compose up --build`）
+- [ ] テストコード（各サービスのユニットテスト）
+- [ ] Lint通過確認（`make lint`）
+- [ ] フロントエンドUIとバックエンドの統合テスト
+
+### 実装上の注意点
+- sqlcのquery.sqlに日本語コメントを入れるとパースエラーになる。`-- name:`アノテーションのみ使用すること
+- 各サービスのスキーマ初期化は`internal/*/schema.go`の`initSchema()`で行う（sqlcのschema.sqlとは別に管理）
+- サービス間通信はHTTPベース。メッセージブローカーなし。イベントサブスクリプションはポーリング方式
+- Event StoreのURLはeventstoreサービスのhandleAppendEventで受け付ける（POST /api/v1/events）
+- Sagaオーケストレーターはバックグラウンドゴルーチンでポーリングする（server.go内でgo s.orchestrator.Start()）

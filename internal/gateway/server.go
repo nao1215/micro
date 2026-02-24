@@ -1,10 +1,18 @@
 package gateway
 
 import (
+	"database/sql"
+	"encoding/json"
 	"fmt"
+	"io"
+	"log"
+	"net/http"
 	"os"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	_ "github.com/mattn/go-sqlite3"
+	gatewaydb "github.com/nao1215/micro/internal/gateway/db"
 	"github.com/nao1215/micro/pkg/middleware"
 )
 
@@ -14,23 +22,63 @@ type Server struct {
 	router *gin.Engine
 	// port はサーバーのリッスンポート。
 	port string
+	// queries はsqlcが生成したクエリ実行オブジェクト。
+	queries *gatewaydb.Queries
+	// db はSQLiteデータベース接続。
+	db *sql.DB
+	// jwtSecret はJWT署名用の秘密鍵。
+	jwtSecret string
+	// serviceURLs は内部サービスのURL。
+	serviceURLs serviceURLConfig
+}
+
+// serviceURLConfig は内部サービスのURL設定。
+type serviceURLConfig struct {
+	MediaCommand string
+	MediaQuery   string
+	Album        string
+	Notification string
+	EventStore   string
 }
 
 // NewServer は新しいGatewayサーバーを生成する。
 func NewServer(port string) (*Server, error) {
+	sqlDB, err := sql.Open("sqlite3", "/data/gateway.db?_journal_mode=WAL&_busy_timeout=5000")
+	if err != nil {
+		return nil, fmt.Errorf("データベース接続に失敗: %w", err)
+	}
+
+	if err := initSchema(sqlDB); err != nil {
+		return nil, fmt.Errorf("スキーマ初期化に失敗: %w", err)
+	}
+
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		jwtSecret = "dev-secret-key"
+	}
+
+	urls := serviceURLConfig{
+		MediaCommand: getEnvOr("MEDIA_COMMAND_URL", "http://localhost:8081"),
+		MediaQuery:   getEnvOr("MEDIA_QUERY_URL", "http://localhost:8082"),
+		Album:        getEnvOr("ALBUM_URL", "http://localhost:8083"),
+		Notification: getEnvOr("NOTIFICATION_URL", "http://localhost:8086"),
+		EventStore:   getEnvOr("EVENTSTORE_URL", "http://localhost:8084"),
+	}
+
+	frontendURL := getEnvOr("FRONTEND_URL", "http://localhost:3000")
+
 	router := gin.New()
 	router.Use(middleware.Recovery())
 	router.Use(gin.Logger())
-
-	frontendURL := os.Getenv("FRONTEND_URL")
-	if frontendURL == "" {
-		frontendURL = "http://localhost:3000"
-	}
 	router.Use(middleware.CORS([]string{frontendURL}))
 
 	s := &Server{
-		router: router,
-		port:   port,
+		router:      router,
+		port:        port,
+		queries:     gatewaydb.New(sqlDB),
+		db:          sqlDB,
+		jwtSecret:   jwtSecret,
+		serviceURLs: urls,
 	}
 	s.setupRoutes()
 
@@ -51,111 +99,260 @@ func (s *Server) setupRoutes() {
 		auth.GET("/github/callback", s.handleGitHubCallback())
 		auth.GET("/google", s.handleGoogleLogin())
 		auth.GET("/google/callback", s.handleGoogleCallback())
-	}
-
-	jwtSecret := os.Getenv("JWT_SECRET")
-	if jwtSecret == "" {
-		jwtSecret = "dev-secret-key"
+		// 開発用トークン発行
+		auth.POST("/dev-token", s.handleDevToken())
 	}
 
 	// 認証必須のAPIエンドポイント
 	api := s.router.Group("/api/v1")
-	api.Use(middleware.JWTAuth(jwtSecret))
+	api.Use(middleware.JWTAuth(s.jwtSecret))
 	{
 		// ユーザー情報
 		api.GET("/me", s.handleGetCurrentUser())
 
 		// メディア（プロキシ）
-		api.POST("/media", s.handleProxyMediaUpload())
-		api.GET("/media", s.handleProxyMediaList())
-		api.GET("/media/:id", s.handleProxyMediaDetail())
-		api.DELETE("/media/:id", s.handleProxyMediaDelete())
+		api.POST("/media", s.handleProxy(s.serviceURLs.MediaCommand, "/api/v1/media"))
+		api.GET("/media", s.handleProxy(s.serviceURLs.MediaQuery, "/api/v1/media"))
+		api.GET("/media/:id", s.handleProxyWithParam(s.serviceURLs.MediaQuery, "/api/v1/media/", "id"))
+		api.DELETE("/media/:id", s.handleProxyWithParam(s.serviceURLs.MediaCommand, "/api/v1/media/", "id"))
 
 		// アルバム（プロキシ）
-		api.POST("/albums", s.handleProxyAlbumCreate())
-		api.GET("/albums", s.handleProxyAlbumList())
-		api.GET("/albums/:id", s.handleProxyAlbumDetail())
-		api.DELETE("/albums/:id", s.handleProxyAlbumDelete())
-		api.POST("/albums/:id/media", s.handleProxyAlbumAddMedia())
+		api.POST("/albums", s.handleProxy(s.serviceURLs.Album, "/api/v1/albums"))
+		api.GET("/albums", s.handleProxy(s.serviceURLs.Album, "/api/v1/albums"))
+		api.GET("/albums/:id", s.handleProxyWithParam(s.serviceURLs.Album, "/api/v1/albums/", "id"))
+		api.DELETE("/albums/:id", s.handleProxyWithParam(s.serviceURLs.Album, "/api/v1/albums/", "id"))
+		api.POST("/albums/:id/media", s.handleProxyAlbumMedia())
 		api.DELETE("/albums/:id/media/:media_id", s.handleProxyAlbumRemoveMedia())
 
 		// 通知
-		api.GET("/notifications", s.handleProxyNotificationList())
-		api.PUT("/notifications/:id/read", s.handleProxyNotificationMarkRead())
+		api.GET("/notifications", s.handleProxy(s.serviceURLs.Notification, "/api/v1/notifications"))
+		api.PUT("/notifications/:id/read", s.handleProxyWithParam(s.serviceURLs.Notification, "/api/v1/notifications/", "id", "/read"))
+
+		// Saga監視
+		api.GET("/sagas", s.handleProxy(getEnvOr("SAGA_URL", "http://localhost:8085"), "/api/v1/sagas"))
+
+		// イベントログ
+		api.GET("/events", s.handleProxy(s.serviceURLs.EventStore, "/api/v1/events"))
 	}
 
 	// ヘルスチェック
 	s.router.GET("/health", func(c *gin.Context) {
-		c.JSON(200, gin.H{"status": "ok", "service": "gateway"})
+		c.JSON(http.StatusOK, gin.H{"status": "ok", "service": "gateway"})
 	})
 }
 
-// 以下、各ハンドラのスタブ実装。
+// handleDevToken は開発用JWTトークンを発行するハンドラを返す。
+// 本番環境では無効化すべき。
+func (s *Server) handleDevToken() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userID := uuid.New().String()
 
+		// 開発用ユーザーが存在しなければ作成
+		_, err := s.queries.GetUserByProvider(c.Request.Context(), gatewaydb.GetUserByProviderParams{
+			Provider:       "dev",
+			ProviderUserID: "dev-user",
+		})
+		if err == sql.ErrNoRows {
+			if err := s.queries.CreateUser(c.Request.Context(), gatewaydb.CreateUserParams{
+				ID:             userID,
+				Provider:       "dev",
+				ProviderUserID: "dev-user",
+				Email:          "dev@localhost",
+				DisplayName:    "開発ユーザー",
+				AvatarUrl:      "",
+			}); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "ユーザー作成に失敗しました"})
+				log.Printf("開発ユーザー作成エラー: %v", err)
+				return
+			}
+		} else if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "ユーザー取得に失敗しました"})
+			return
+		} else {
+			// 既存の開発ユーザーを使用
+			user, _ := s.queries.GetUserByProvider(c.Request.Context(), gatewaydb.GetUserByProviderParams{
+				Provider:       "dev",
+				ProviderUserID: "dev-user",
+			})
+			userID = user.ID
+			_ = s.queries.UpdateLastLogin(c.Request.Context(), userID)
+		}
+
+		token, err := middleware.GenerateJWT(s.jwtSecret, userID, "dev@localhost")
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "トークン生成に失敗しました"})
+			log.Printf("JWT生成エラー: %v", err)
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"token":   token,
+			"user_id": userID,
+		})
+	}
+}
+
+// handleGitHubLogin はGitHub OAuth2ログインを開始するハンドラを返す。
 func (s *Server) handleGitHubLogin() gin.HandlerFunc {
-	return func(c *gin.Context) { c.JSON(501, gin.H{"error": "未実装"}) }
+	return func(c *gin.Context) {
+		clientID := os.Getenv("GITHUB_CLIENT_ID")
+		if clientID == "" {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "GitHub OAuth2が設定されていません"})
+			return
+		}
+		state := uuid.New().String()
+		redirectURL := fmt.Sprintf("https://github.com/login/oauth/authorize?client_id=%s&state=%s&scope=user:email", clientID, state)
+		c.Redirect(http.StatusTemporaryRedirect, redirectURL)
+	}
 }
 
+// handleGitHubCallback はGitHub OAuth2コールバックを処理するハンドラを返す。
 func (s *Server) handleGitHubCallback() gin.HandlerFunc {
-	return func(c *gin.Context) { c.JSON(501, gin.H{"error": "未実装"}) }
+	return func(c *gin.Context) {
+		// TODO: GitHub OAuth2のアクセストークン交換とユーザー情報取得を実装
+		c.JSON(http.StatusNotImplemented, gin.H{"error": "GitHub OAuth2コールバックは未実装です。開発用トークン（POST /auth/dev-token）を使用してください。"})
+	}
 }
 
+// handleGoogleLogin はGoogle OAuth2ログインを開始するハンドラを返す。
 func (s *Server) handleGoogleLogin() gin.HandlerFunc {
-	return func(c *gin.Context) { c.JSON(501, gin.H{"error": "未実装"}) }
+	return func(c *gin.Context) {
+		clientID := os.Getenv("GOOGLE_CLIENT_ID")
+		if clientID == "" {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Google OAuth2が設定されていません"})
+			return
+		}
+		state := uuid.New().String()
+		redirectURL := fmt.Sprintf("https://accounts.google.com/o/oauth2/v2/auth?client_id=%s&response_type=code&scope=openid%%20email%%20profile&state=%s&redirect_uri=%s/auth/google/callback",
+			clientID, state, getEnvOr("FRONTEND_URL", "http://localhost:8080"))
+		c.Redirect(http.StatusTemporaryRedirect, redirectURL)
+	}
 }
 
+// handleGoogleCallback はGoogle OAuth2コールバックを処理するハンドラを返す。
 func (s *Server) handleGoogleCallback() gin.HandlerFunc {
-	return func(c *gin.Context) { c.JSON(501, gin.H{"error": "未実装"}) }
+	return func(c *gin.Context) {
+		// TODO: Google OAuth2のアクセストークン交換とユーザー情報取得を実装
+		c.JSON(http.StatusNotImplemented, gin.H{"error": "Google OAuth2コールバックは未実装です。開発用トークン（POST /auth/dev-token）を使用してください。"})
+	}
 }
 
+// handleGetCurrentUser は認証済みユーザーの情報を返すハンドラを返す。
 func (s *Server) handleGetCurrentUser() gin.HandlerFunc {
-	return func(c *gin.Context) { c.JSON(501, gin.H{"error": "未実装"}) }
+	return func(c *gin.Context) {
+		userID := middleware.GetUserID(c)
+		if userID == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "ユーザーIDが取得できません"})
+			return
+		}
+
+		user, err := s.queries.GetUserByID(c.Request.Context(), userID)
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "ユーザーが見つかりません"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"id":           user.ID,
+			"email":        user.Email,
+			"display_name": user.DisplayName,
+			"avatar_url":   user.AvatarUrl,
+			"provider":     user.Provider,
+		})
+	}
 }
 
-func (s *Server) handleProxyMediaUpload() gin.HandlerFunc {
-	return func(c *gin.Context) { c.JSON(501, gin.H{"error": "未実装"}) }
+// handleProxy は指定されたサービスにリクエストをプロキシするハンドラを返す。
+func (s *Server) handleProxy(baseURL, path string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		proxyURL := baseURL + path
+		if c.Request.URL.RawQuery != "" {
+			proxyURL += "?" + c.Request.URL.RawQuery
+		}
+		s.doProxy(c, c.Request.Method, proxyURL)
+	}
 }
 
-func (s *Server) handleProxyMediaList() gin.HandlerFunc {
-	return func(c *gin.Context) { c.JSON(501, gin.H{"error": "未実装"}) }
+// handleProxyWithParam はURLパラメータを含むプロキシハンドラを返す。
+func (s *Server) handleProxyWithParam(baseURL, pathPrefix, paramName string, pathSuffix ...string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		proxyURL := baseURL + pathPrefix + c.Param(paramName)
+		for _, suffix := range pathSuffix {
+			proxyURL += suffix
+		}
+		if c.Request.URL.RawQuery != "" {
+			proxyURL += "?" + c.Request.URL.RawQuery
+		}
+		s.doProxy(c, c.Request.Method, proxyURL)
+	}
 }
 
-func (s *Server) handleProxyMediaDetail() gin.HandlerFunc {
-	return func(c *gin.Context) { c.JSON(501, gin.H{"error": "未実装"}) }
+// handleProxyAlbumMedia はアルバムへのメディア追加をプロキシするハンドラを返す。
+func (s *Server) handleProxyAlbumMedia() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		albumID := c.Param("id")
+		proxyURL := s.serviceURLs.Album + "/api/v1/albums/" + albumID + "/media"
+		s.doProxy(c, http.MethodPost, proxyURL)
+	}
 }
 
-func (s *Server) handleProxyMediaDelete() gin.HandlerFunc {
-	return func(c *gin.Context) { c.JSON(501, gin.H{"error": "未実装"}) }
-}
-
-func (s *Server) handleProxyAlbumCreate() gin.HandlerFunc {
-	return func(c *gin.Context) { c.JSON(501, gin.H{"error": "未実装"}) }
-}
-
-func (s *Server) handleProxyAlbumList() gin.HandlerFunc {
-	return func(c *gin.Context) { c.JSON(501, gin.H{"error": "未実装"}) }
-}
-
-func (s *Server) handleProxyAlbumDetail() gin.HandlerFunc {
-	return func(c *gin.Context) { c.JSON(501, gin.H{"error": "未実装"}) }
-}
-
-func (s *Server) handleProxyAlbumDelete() gin.HandlerFunc {
-	return func(c *gin.Context) { c.JSON(501, gin.H{"error": "未実装"}) }
-}
-
-func (s *Server) handleProxyAlbumAddMedia() gin.HandlerFunc {
-	return func(c *gin.Context) { c.JSON(501, gin.H{"error": "未実装"}) }
-}
-
+// handleProxyAlbumRemoveMedia はアルバムからのメディア削除をプロキシするハンドラを返す。
 func (s *Server) handleProxyAlbumRemoveMedia() gin.HandlerFunc {
-	return func(c *gin.Context) { c.JSON(501, gin.H{"error": "未実装"}) }
+	return func(c *gin.Context) {
+		albumID := c.Param("id")
+		mediaID := c.Param("media_id")
+		proxyURL := s.serviceURLs.Album + "/api/v1/albums/" + albumID + "/media/" + mediaID
+		s.doProxy(c, http.MethodDelete, proxyURL)
+	}
 }
 
-func (s *Server) handleProxyNotificationList() gin.HandlerFunc {
-	return func(c *gin.Context) { c.JSON(501, gin.H{"error": "未実装"}) }
+// doProxy はリクエストを内部サービスにプロキシする共通処理。
+// JWTトークンとユーザーIDヘッダーを転送する。
+func (s *Server) doProxy(c *gin.Context, method, url string) {
+	req, err := http.NewRequestWithContext(c.Request.Context(), method, url, c.Request.Body)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "プロキシリクエストの作成に失敗しました"})
+		return
+	}
+
+	// 元のリクエストヘッダーを転送
+	req.Header.Set("Content-Type", c.GetHeader("Content-Type"))
+	req.Header.Set("Authorization", c.GetHeader("Authorization"))
+	req.Header.Set("X-User-ID", middleware.GetUserID(c))
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "内部サービスとの通信に失敗しました"})
+		log.Printf("プロキシエラー: url=%s, error=%v", url, err)
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "レスポンスの読み取りに失敗しました"})
+		return
+	}
+
+	// レスポンスのContent-Typeに応じてそのまま転送
+	contentType := resp.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "application/json"
+	}
+
+	// JSONレスポンスの場合はパースして返す（Ginのフォーマットに合わせる）
+	if json.Valid(body) {
+		c.Data(resp.StatusCode, contentType, body)
+	} else {
+		c.Data(resp.StatusCode, contentType, body)
+	}
 }
 
-func (s *Server) handleProxyNotificationMarkRead() gin.HandlerFunc {
-	return func(c *gin.Context) { c.JSON(501, gin.H{"error": "未実装"}) }
+// getEnvOr は環境変数を取得し、設定されていない場合はデフォルト値を返す。
+func getEnvOr(key, defaultValue string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return defaultValue
 }
