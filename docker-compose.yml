@@ -20,6 +20,7 @@ services:
       - MEDIA_COMMAND_URL=http://media-command:8081
       - MEDIA_QUERY_URL=http://media-query:8082
       - ALBUM_URL=http://album:8083
+      - NOTIFICATION_URL=http://notification:8086
       - FRONTEND_URL=http://localhost:3000
     volumes:
       - gateway-data:/data

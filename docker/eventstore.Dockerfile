@@ -1,13 +1,15 @@
 # Build stage
 FROM golang:1.25-alpine AS builder
 
+RUN apk add --no-cache gcc musl-dev
+
 WORKDIR /app
 
 COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN go build -o eventstore ./cmd/eventstore
+RUN CGO_ENABLED=1 go build -o eventstore ./cmd/eventstore
 
 # Run stage
 FROM alpine:latest
