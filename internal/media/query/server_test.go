@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 	mediadb "github.com/nao1215/micro/internal/media/query/db"
 	"github.com/nao1215/micro/pkg/middleware"
 )
@@ -24,7 +24,7 @@ func setupTestQueryServer(t *testing.T) (*Server, *sql.DB) {
 
 	gin.SetMode(gin.TestMode)
 
-	sqlDB, err := sql.Open("sqlite3", ":memory:")
+	sqlDB, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("インメモリSQLiteの接続に失敗: %v", err)
 	}

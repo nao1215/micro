@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 	gatewaydb "github.com/nao1215/micro/internal/gateway/db"
 	"github.com/nao1215/micro/pkg/middleware"
 )
@@ -29,7 +29,7 @@ const testJWTSecret = "test-secret-key"
 func newTestServer(t *testing.T) *Server {
 	t.Helper()
 
-	sqlDB, err := sql.Open("sqlite3", ":memory:")
+	sqlDB, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("インメモリDB接続に失敗: %v", err)
 	}
@@ -67,7 +67,7 @@ func newTestServerWithBackend(t *testing.T, backendHandler http.HandlerFunc) (*S
 	backend := httptest.NewServer(backendHandler)
 	t.Cleanup(backend.Close)
 
-	sqlDB, err := sql.Open("sqlite3", ":memory:")
+	sqlDB, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("インメモリDB接続に失敗: %v", err)
 	}

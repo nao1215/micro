@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 	eventstoredb "github.com/nao1215/micro/internal/eventstore/db"
 	"github.com/nao1215/micro/pkg/event"
 	"github.com/nao1215/micro/pkg/middleware"
@@ -30,7 +30,7 @@ type Server struct {
 // NewServer は新しいイベントストアサーバーを生成する。
 // SQLiteデータベースの初期化とスキーマ作成を行う。
 func NewServer(port string) (*Server, error) {
-	sqlDB, err := sql.Open("sqlite3", "/data/eventstore.db?_journal_mode=WAL&_busy_timeout=5000")
+	sqlDB, err := sql.Open("sqlite", "/data/eventstore.db?_journal_mode=WAL&_busy_timeout=5000")
 	if err != nil {
 		return nil, fmt.Errorf("データベース接続に失敗: %w", err)
 	}

@@ -7,7 +7,7 @@ import (
 	"os"
 
 	"github.com/gin-gonic/gin"
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 	sagadb "github.com/nao1215/micro/internal/saga/db"
 	"github.com/nao1215/micro/pkg/httpclient"
 	"github.com/nao1215/micro/pkg/middleware"
@@ -29,7 +29,7 @@ type Server struct {
 
 // NewServer は新しいSagaサーバーを生成する。
 func NewServer(port string) (*Server, error) {
-	sqlDB, err := sql.Open("sqlite3", "/data/saga.db?_journal_mode=WAL&_busy_timeout=5000")
+	sqlDB, err := sql.Open("sqlite", "/data/saga.db?_journal_mode=WAL&_busy_timeout=5000")
 	if err != nil {
 		return nil, fmt.Errorf("データベース接続に失敗: %w", err)
 	}

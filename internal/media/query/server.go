@@ -9,7 +9,7 @@ import (
 	"os"
 
 	"github.com/gin-gonic/gin"
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 	mediadb "github.com/nao1215/micro/internal/media/query/db"
 	"github.com/nao1215/micro/pkg/middleware"
 )
@@ -32,7 +32,7 @@ type Server struct {
 // NewServer は新しいメディアクエリサーバーを生成する。
 // SQLite Read Modelの初期化、スキーマ作成、およびProjectorのバックグラウンド起動を行う。
 func NewServer(port string) (*Server, error) {
-	sqlDB, err := sql.Open("sqlite3", "/data/media-query.db?_journal_mode=WAL&_busy_timeout=5000")
+	sqlDB, err := sql.Open("sqlite", "/data/media-query.db?_journal_mode=WAL&_busy_timeout=5000")
 	if err != nil {
 		return nil, fmt.Errorf("Read Modelデータベース接続に失敗: %w", err)
 	}

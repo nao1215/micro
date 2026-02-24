@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 	eventstoredb "github.com/nao1215/micro/internal/eventstore/db"
 )
 
@@ -22,7 +22,7 @@ func setupTestServer(t *testing.T) *Server {
 
 	gin.SetMode(gin.TestMode)
 
-	sqlDB, err := sql.Open("sqlite3", ":memory:")
+	sqlDB, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("インメモリSQLiteの接続に失敗: %v", err)
 	}
@@ -1053,7 +1053,7 @@ func TestInitSchema(t *testing.T) {
 	t.Run("正常にスキーマを初期化できる", func(t *testing.T) {
 		t.Parallel()
 
-		sqlDB, err := sql.Open("sqlite3", ":memory:")
+		sqlDB, err := sql.Open("sqlite", ":memory:")
 		if err != nil {
 			t.Fatalf("SQLite接続に失敗: %v", err)
 		}
@@ -1077,7 +1077,7 @@ func TestInitSchema(t *testing.T) {
 	t.Run("二重初期化してもエラーにならない", func(t *testing.T) {
 		t.Parallel()
 
-		sqlDB, err := sql.Open("sqlite3", ":memory:")
+		sqlDB, err := sql.Open("sqlite", ":memory:")
 		if err != nil {
 			t.Fatalf("SQLite接続に失敗: %v", err)
 		}

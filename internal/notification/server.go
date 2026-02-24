@@ -11,7 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 	notificationdb "github.com/nao1215/micro/internal/notification/db"
 	"github.com/nao1215/micro/pkg/event"
 	"github.com/nao1215/micro/pkg/httpclient"
@@ -35,7 +35,7 @@ type Server struct {
 // NewServer は新しい通知サーバーを生成する。
 // SQLiteデータベースの初期化とスキーマ作成を行う。
 func NewServer(port string) (*Server, error) {
-	sqlDB, err := sql.Open("sqlite3", "/data/notification.db?_journal_mode=WAL&_busy_timeout=5000")
+	sqlDB, err := sql.Open("sqlite", "/data/notification.db?_journal_mode=WAL&_busy_timeout=5000")
 	if err != nil {
 		return nil, fmt.Errorf("データベース接続に失敗: %w", err)
 	}

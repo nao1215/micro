@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 	sagadb "github.com/nao1215/micro/internal/saga/db"
 	"github.com/nao1215/micro/pkg/httpclient"
 )
@@ -24,7 +24,7 @@ func init() {
 func newTestServer(t *testing.T) *Server {
 	t.Helper()
 
-	sqlDB, err := sql.Open("sqlite3", ":memory:")
+	sqlDB, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("インメモリDB接続に失敗: %v", err)
 	}

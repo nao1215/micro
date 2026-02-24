@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 	albumdb "github.com/nao1215/micro/internal/album/db"
 	"github.com/nao1215/micro/pkg/httpclient"
 )
@@ -24,7 +24,7 @@ func init() {
 func setupTestServer(t *testing.T) (*Server, *gin.Engine) {
 	t.Helper()
 
-	sqlDB, err := sql.Open("sqlite3", ":memory:?_foreign_keys=ON")
+	sqlDB, err := sql.Open("sqlite", ":memory:?_foreign_keys=ON")
 	if err != nil {
 		t.Fatalf("インメモリDBの作成に失敗: %v", err)
 	}

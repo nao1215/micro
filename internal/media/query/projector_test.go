@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 	mediadb "github.com/nao1215/micro/internal/media/query/db"
 	"github.com/nao1215/micro/pkg/event"
 )
@@ -17,7 +17,7 @@ import (
 func setupTestProjector(t *testing.T) (*Projector, *mediadb.Queries, *sql.DB) {
 	t.Helper()
 
-	sqlDB, err := sql.Open("sqlite3", ":memory:")
+	sqlDB, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("インメモリSQLiteの接続に失敗: %v", err)
 	}
@@ -544,7 +544,7 @@ func TestNewProjector(t *testing.T) {
 	t.Run("正常系_Projectorが正しく初期化される", func(t *testing.T) {
 		t.Parallel()
 
-		sqlDB, err := sql.Open("sqlite3", ":memory:")
+		sqlDB, err := sql.Open("sqlite", ":memory:")
 		if err != nil {
 			t.Fatalf("インメモリSQLiteの接続に失敗: %v", err)
 		}
@@ -574,7 +574,7 @@ func TestProjectorStartStop(t *testing.T) {
 	t.Run("正常系_ProjectorのStartとStopが正常に動作する", func(t *testing.T) {
 		t.Parallel()
 
-		sqlDB, err := sql.Open("sqlite3", ":memory:")
+		sqlDB, err := sql.Open("sqlite", ":memory:")
 		if err != nil {
 			t.Fatalf("インメモリSQLiteの接続に失敗: %v", err)
 		}
@@ -598,7 +598,7 @@ func TestProjectorStartStop(t *testing.T) {
 	t.Run("正常系_Stopはcancelがnilでも安全に呼び出せる", func(t *testing.T) {
 		t.Parallel()
 
-		sqlDB, err := sql.Open("sqlite3", ":memory:")
+		sqlDB, err := sql.Open("sqlite", ":memory:")
 		if err != nil {
 			t.Fatalf("インメモリSQLiteの接続に失敗: %v", err)
 		}

@@ -11,7 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 	gatewaydb "github.com/nao1215/micro/internal/gateway/db"
 	"github.com/nao1215/micro/pkg/middleware"
 )
@@ -43,7 +43,7 @@ type serviceURLConfig struct {
 
 // NewServer は新しいGatewayサーバーを生成する。
 func NewServer(port string) (*Server, error) {
-	sqlDB, err := sql.Open("sqlite3", "/data/gateway.db?_journal_mode=WAL&_busy_timeout=5000")
+	sqlDB, err := sql.Open("sqlite", "/data/gateway.db?_journal_mode=WAL&_busy_timeout=5000")
 	if err != nil {
 		return nil, fmt.Errorf("データベース接続に失敗: %w", err)
 	}
