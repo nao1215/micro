@@ -45,3 +45,10 @@ CREATE INDEX IF NOT EXISTS idx_media_status
 -- Content-Typeでのフィルタリングを高速化するインデックス。
 CREATE INDEX IF NOT EXISTS idx_media_content_type
     ON media_read_models(content_type);
+
+-- Projectorのオフセット（最後にポーリングしたイベントのタイムスタンプ）を永続化するテーブル。
+CREATE TABLE IF NOT EXISTS projector_offsets (
+    id TEXT PRIMARY KEY DEFAULT 'default',
+    last_timestamp DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL DEFAULT (datetime('now'))
+);

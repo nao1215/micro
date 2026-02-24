@@ -38,7 +38,27 @@ SET status = ?, result = ?, completed_at = datetime('now')
 WHERE id = ?;
 
 -- name: ListSagaSteps :many
-SELECT id, saga_id, step_name, status, result, started_at, completed_at
+SELECT id, saga_id, step_name, status, result, started_at, completed_at, retry_count, last_error
 FROM saga_steps
 WHERE saga_id = ?
 ORDER BY started_at ASC;
+
+-- name: UpdateSagaStepRetry :exec
+UPDATE saga_steps
+SET retry_count = ?, last_error = ?, status = ?
+WHERE id = ?;
+
+-- name: ListStuckSagas :many
+SELECT id, saga_type, current_step, status, payload, started_at, updated_at, completed_at
+FROM sagas
+WHERE status IN ('in_progress', 'compensating')
+  AND updated_at < ?
+ORDER BY updated_at ASC;
+
+-- name: GetProjectorOffset :one
+SELECT last_timestamp FROM projector_offsets WHERE id = 'default';
+
+-- name: UpsertProjectorOffset :exec
+INSERT INTO projector_offsets (id, last_timestamp, updated_at)
+VALUES ('default', ?, datetime('now'))
+ON CONFLICT(id) DO UPDATE SET last_timestamp = excluded.last_timestamp, updated_at = datetime('now');

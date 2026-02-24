@@ -134,6 +134,8 @@ type sagaStepResponse struct {
 	Result      string  `json:"result"`
 	StartedAt   *string `json:"started_at,omitempty"`
 	CompletedAt *string `json:"completed_at,omitempty"`
+	RetryCount  int64   `json:"retry_count"`
+	LastError   string  `json:"last_error,omitempty"`
 }
 
 // handleListActive はアクティブなSaga一覧を返すハンドラ。
@@ -201,10 +203,12 @@ func (s *Server) handleGetByID() gin.HandlerFunc {
 		resp.Steps = make([]sagaStepResponse, 0, len(steps))
 		for _, step := range steps {
 			sr := sagaStepResponse{
-				ID:       step.ID,
-				StepName: step.StepName,
-				Status:   step.Status,
-				Result:   step.Result,
+				ID:         step.ID,
+				StepName:   step.StepName,
+				Status:     step.Status,
+				Result:     step.Result,
+				RetryCount: step.RetryCount,
+				LastError:  step.LastError,
 			}
 			if step.StartedAt.Valid {
 				t := step.StartedAt.Time.Format("2006-01-02T15:04:05Z")

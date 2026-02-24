@@ -13,6 +13,15 @@ import (
 	"github.com/nao1215/micro/pkg/httpclient"
 )
 
+const (
+	// maxRetries はステップ実行の最大リトライ回数。
+	maxRetries = 3
+	// stuckSagaThreshold はSagaがスタックしたとみなす閾値。
+	stuckSagaThreshold = 5 * time.Minute
+	// stuckSagaCheckInterval はスタックSagaのチェック間隔。
+	stuckSagaCheckInterval = 1 * time.Minute
+)
+
 // Orchestrator はSagaの実行を管理するオーケストレータ。
 // Event Storeをポーリングしてイベントを受信し、対応するSagaを進行させる。
 // 失敗時には逆順に補償アクションを実行する。
@@ -65,12 +74,32 @@ type eventStoreEvent struct {
 func (o *Orchestrator) Start() {
 	log.Println("[Saga] オーケストレータを開始します。イベントポーリング間隔: 3秒")
 
+	// 永続化されたオフセットを読み込む
+	o.loadOffset()
+
+	// スタックSaga検出をバックグラウンドで開始
+	go o.startStuckSagaDetector()
+
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 
 	for range ticker.C {
 		o.poll()
 	}
+}
+
+// loadOffset は永続化されたオフセットを読み込み、lastPolledAtに設定する。
+func (o *Orchestrator) loadOffset() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	offset, err := o.queries.GetProjectorOffset(ctx)
+	if err != nil {
+		log.Println("[Saga] 永続化オフセットなし（初回起動）、1時間前からポーリングします")
+		return
+	}
+	o.lastPolledAt = offset
+	log.Printf("[Saga] 永続化オフセットを復元しました: %s", offset.Format(time.RFC3339))
 }
 
 // poll はEvent Storeから新しいイベントを取得し、Sagaを進行させる。
@@ -96,6 +125,11 @@ func (o *Orchestrator) poll() {
 		lastEvent := events[len(events)-1]
 		if t, err := time.Parse(time.RFC3339, lastEvent.CreatedAt); err == nil {
 			o.lastPolledAt = t
+
+			// オフセットを永続化する
+			if err := o.queries.UpsertProjectorOffset(ctx, t); err != nil {
+				log.Printf("[Saga] オフセット永続化エラー: %v", err)
+			}
 		}
 	}
 }
@@ -281,7 +315,8 @@ func (o *Orchestrator) compensateOnProcessingFailed(ctx context.Context, aggrega
 	}
 }
 
-// executeStep はSagaのステップを実行し、結果をDBに記録する。
+// executeStep はSagaのステップをリトライ付きで実行し、結果をDBに記録する。
+// 最大maxRetries回まで指数バックオフでリトライする。
 func (o *Orchestrator) executeStep(ctx context.Context, sagaID, stepName string, action func() error) {
 	stepID := uuid.New().String()
 
@@ -295,24 +330,114 @@ func (o *Orchestrator) executeStep(ctx context.Context, sagaID, stepName string,
 		log.Printf("[Saga] ステップ記録エラー: %v", err)
 	}
 
-	// ステップを実行
-	if err := action(); err != nil {
-		log.Printf("[Saga] ステップ実行エラー: step=%s, error=%v", stepName, err)
-		resultJSON, _ := json.Marshal(map[string]string{"error": err.Error()})
-		_ = o.queries.UpdateSagaStepStatus(ctx, sagadb.UpdateSagaStepStatusParams{
-			Status: "failed",
-			Result: string(resultJSON),
-			ID:     stepID,
+	var lastErr error
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		// 2回目以降は指数バックオフで待機
+		if attempt > 0 {
+			backoff := time.Duration(1<<uint(attempt-1)) * time.Second
+			log.Printf("[Saga] ステップ %s リトライ %d/%d（%v後）: saga_id=%s", stepName, attempt, maxRetries, backoff, sagaID)
+			time.Sleep(backoff)
+		}
+
+		lastErr = action()
+		if lastErr == nil {
+			// 成功
+			_ = o.queries.UpdateSagaStepStatus(ctx, sagadb.UpdateSagaStepStatusParams{
+				Status: "completed",
+				Result: "{}",
+				ID:     stepID,
+			})
+			if attempt > 0 {
+				// リトライ回数を記録
+				_ = o.queries.UpdateSagaStepRetry(ctx, sagadb.UpdateSagaStepRetryParams{
+					RetryCount: int64(attempt),
+					LastError:  "",
+					Status:     "completed",
+					ID:         stepID,
+				})
+			}
+			return
+		}
+
+		// リトライ情報をDBに記録
+		_ = o.queries.UpdateSagaStepRetry(ctx, sagadb.UpdateSagaStepRetryParams{
+			RetryCount: int64(attempt + 1),
+			LastError:  lastErr.Error(),
+			Status:     "executing",
+			ID:         stepID,
 		})
+	}
+
+	// 全リトライ失敗
+	log.Printf("[Saga] ステップ実行失敗（リトライ上限到達）: step=%s, error=%v, saga_id=%s", stepName, lastErr, sagaID)
+	resultJSON, _ := json.Marshal(map[string]string{"error": lastErr.Error()})
+	_ = o.queries.UpdateSagaStepStatus(ctx, sagadb.UpdateSagaStepStatusParams{
+		Status: "failed",
+		Result: string(resultJSON),
+		ID:     stepID,
+	})
+}
+
+// startStuckSagaDetector はスタックしたSagaを定期的に検出して処理するバックグラウンドループ。
+func (o *Orchestrator) startStuckSagaDetector() {
+	log.Printf("[Saga] スタックSaga検出を開始します（チェック間隔: %v、閾値: %v）", stuckSagaCheckInterval, stuckSagaThreshold)
+
+	ticker := time.NewTicker(stuckSagaCheckInterval)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		o.checkStuckSagas()
+	}
+}
+
+// checkStuckSagas はスタックしたSagaを検出し、適切な処理を行う。
+func (o *Orchestrator) checkStuckSagas() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	threshold := time.Now().UTC().Add(-stuckSagaThreshold)
+	stuckSagas, err := o.queries.ListStuckSagas(ctx, threshold)
+	if err != nil {
+		log.Printf("[Saga] スタックSaga検索エラー: %v", err)
 		return
 	}
 
-	// ステップ完了を記録
-	_ = o.queries.UpdateSagaStepStatus(ctx, sagadb.UpdateSagaStepStatusParams{
-		Status: "completed",
-		Result: "{}",
-		ID:     stepID,
-	})
+	for _, saga := range stuckSagas {
+		log.Printf("[Saga] スタックSaga検出: saga_id=%s, status=%s, current_step=%s, updated_at=%s",
+			saga.ID, saga.Status, saga.CurrentStep, saga.UpdatedAt.Format(time.RFC3339))
+
+		switch saga.Status {
+		case "compensating":
+			// 補償中のSagaは再補償を試行
+			log.Printf("[Saga] 補償中のスタックSagaを再補償します: saga_id=%s", saga.ID)
+			var payloadMap map[string]string
+			if err := json.Unmarshal([]byte(saga.Payload), &payloadMap); err != nil {
+				log.Printf("[Saga] ペイロード解析エラー: saga_id=%s, error=%v", saga.ID, err)
+				continue
+			}
+			aggregateID := payloadMap["media_aggregate_id"]
+			if aggregateID != "" {
+				o.executeStep(ctx, saga.ID, "compensate_upload_retry", func() error {
+					mediaID := extractMediaID(aggregateID)
+					compensateReq := map[string]string{
+						"saga_id": saga.ID,
+						"reason":  "スタック検出による再補償",
+					}
+					return o.mediaCommandClient.PostJSON(ctx, fmt.Sprintf("/api/v1/media/%s/compensate", mediaID), compensateReq, nil)
+				})
+			}
+			// 再補償後に失敗としてマーク
+			if err := o.queries.FailSaga(ctx, saga.ID); err != nil {
+				log.Printf("[Saga] Saga失敗記録エラー: %v", err)
+			}
+		case "in_progress":
+			// 進行中のスタックSagaは失敗としてマーク
+			log.Printf("[Saga] 進行中のスタックSagaを失敗としてマークします: saga_id=%s", saga.ID)
+			if err := o.queries.FailSaga(ctx, saga.ID); err != nil {
+				log.Printf("[Saga] Saga失敗記録エラー: %v", err)
+			}
+		}
+	}
 }
 
 // findActiveSagaByAggregateID はメディアのaggregate_idに対応するアクティブなSagaを検索する。

@@ -14,9 +14,7 @@ linters:
     - ineffassign
     - staticcheck
     - unused
-    - gosimple
     - gocritic
-    - gofmt
     - misspell
 
 formatters:

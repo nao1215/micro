@@ -25,3 +25,9 @@ type MediaReadModel struct {
 	UploadedAt       time.Time
 	UpdatedAt        time.Time
 }
+
+type ProjectorOffset struct {
+	ID            string
+	LastTimestamp time.Time
+	UpdatedAt     time.Time
+}

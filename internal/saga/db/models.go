@@ -9,6 +9,12 @@ import (
 	"time"
 )
 
+type ProjectorOffset struct {
+	ID            string
+	LastTimestamp time.Time
+	UpdatedAt     time.Time
+}
+
 type Saga struct {
 	ID          string
 	SagaType    string
@@ -28,4 +34,6 @@ type SagaStep struct {
 	Result      string
 	StartedAt   sql.NullTime
 	CompletedAt sql.NullTime
+	RetryCount  int64
+	LastError   string
 }

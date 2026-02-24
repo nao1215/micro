@@ -57,3 +57,11 @@ ORDER BY uploaded_at DESC;
 
 -- name: DeleteAllMediaReadModels :exec
 DELETE FROM media_read_models;
+
+-- name: GetProjectorOffset :one
+SELECT last_timestamp FROM projector_offsets WHERE id = 'default';
+
+-- name: UpsertProjectorOffset :exec
+INSERT INTO projector_offsets (id, last_timestamp, updated_at)
+VALUES ('default', ?, datetime('now'))
+ON CONFLICT(id) DO UPDATE SET last_timestamp = excluded.last_timestamp, updated_at = datetime('now');

@@ -7,6 +7,7 @@ package sagadb
 
 import (
 	"context"
+	"time"
 )
 
 const completeSaga = `-- name: CompleteSaga :exec
@@ -75,6 +76,17 @@ func (q *Queries) FailSaga(ctx context.Context, id string) error {
 	return err
 }
 
+const getProjectorOffset = `-- name: GetProjectorOffset :one
+SELECT last_timestamp FROM projector_offsets WHERE id = 'default'
+`
+
+func (q *Queries) GetProjectorOffset(ctx context.Context) (time.Time, error) {
+	row := q.db.QueryRowContext(ctx, getProjectorOffset)
+	var last_timestamp time.Time
+	err := row.Scan(&last_timestamp)
+	return last_timestamp, err
+}
+
 const getSagaByID = `-- name: GetSagaByID :one
 SELECT id, saga_type, current_step, status, payload, started_at, updated_at, completed_at
 FROM sagas
@@ -137,7 +149,7 @@ func (q *Queries) ListActiveSagas(ctx context.Context) ([]Saga, error) {
 }
 
 const listSagaSteps = `-- name: ListSagaSteps :many
-SELECT id, saga_id, step_name, status, result, started_at, completed_at
+SELECT id, saga_id, step_name, status, result, started_at, completed_at, retry_count, last_error
 FROM saga_steps
 WHERE saga_id = ?
 ORDER BY started_at ASC
@@ -159,6 +171,48 @@ func (q *Queries) ListSagaSteps(ctx context.Context, sagaID string) ([]SagaStep,
 			&i.Status,
 			&i.Result,
 			&i.StartedAt,
+			&i.CompletedAt,
+			&i.RetryCount,
+			&i.LastError,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listStuckSagas = `-- name: ListStuckSagas :many
+SELECT id, saga_type, current_step, status, payload, started_at, updated_at, completed_at
+FROM sagas
+WHERE status IN ('in_progress', 'compensating')
+  AND updated_at < ?
+ORDER BY updated_at ASC
+`
+
+func (q *Queries) ListStuckSagas(ctx context.Context, updatedAt time.Time) ([]Saga, error) {
+	rows, err := q.db.QueryContext(ctx, listStuckSagas, updatedAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Saga
+	for rows.Next() {
+		var i Saga
+		if err := rows.Scan(
+			&i.ID,
+			&i.SagaType,
+			&i.CurrentStep,
+			&i.Status,
+			&i.Payload,
+			&i.StartedAt,
+			&i.UpdatedAt,
 			&i.CompletedAt,
 		); err != nil {
 			return nil, err
@@ -197,6 +251,29 @@ func (q *Queries) UpdateSagaStep(ctx context.Context, arg UpdateSagaStepParams) 
 	return err
 }
 
+const updateSagaStepRetry = `-- name: UpdateSagaStepRetry :exec
+UPDATE saga_steps
+SET retry_count = ?, last_error = ?, status = ?
+WHERE id = ?
+`
+
+type UpdateSagaStepRetryParams struct {
+	RetryCount int64
+	LastError  string
+	Status     string
+	ID         string
+}
+
+func (q *Queries) UpdateSagaStepRetry(ctx context.Context, arg UpdateSagaStepRetryParams) error {
+	_, err := q.db.ExecContext(ctx, updateSagaStepRetry,
+		arg.RetryCount,
+		arg.LastError,
+		arg.Status,
+		arg.ID,
+	)
+	return err
+}
+
 const updateSagaStepStatus = `-- name: UpdateSagaStepStatus :exec
 UPDATE saga_steps
 SET status = ?, result = ?, completed_at = datetime('now')
@@ -211,5 +288,16 @@ type UpdateSagaStepStatusParams struct {
 
 func (q *Queries) UpdateSagaStepStatus(ctx context.Context, arg UpdateSagaStepStatusParams) error {
 	_, err := q.db.ExecContext(ctx, updateSagaStepStatus, arg.Status, arg.Result, arg.ID)
+	return err
+}
+
+const upsertProjectorOffset = `-- name: UpsertProjectorOffset :exec
+INSERT INTO projector_offsets (id, last_timestamp, updated_at)
+VALUES ('default', ?, datetime('now'))
+ON CONFLICT(id) DO UPDATE SET last_timestamp = excluded.last_timestamp, updated_at = datetime('now')
+`
+
+func (q *Queries) UpsertProjectorOffset(ctx context.Context, lastTimestamp time.Time) error {
+	_, err := q.db.ExecContext(ctx, upsertProjectorOffset, lastTimestamp)
 	return err
 }

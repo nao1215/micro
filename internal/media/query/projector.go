@@ -50,6 +50,9 @@ func (p *Projector) Start(ctx context.Context) {
 	ctx, cancel := context.WithCancel(ctx)
 	p.cancel = cancel
 
+	// 永続化されたオフセットを読み込む
+	p.loadOffset(ctx)
+
 	go func() {
 		log.Println("Projector: Event Storeポーリングを開始します")
 		ticker := time.NewTicker(p.interval)
@@ -67,6 +70,19 @@ func (p *Projector) Start(ctx context.Context) {
 			}
 		}
 	}()
+}
+
+// loadOffset は永続化されたオフセットを読み込み、lastTimestampに設定する。
+func (p *Projector) loadOffset(ctx context.Context) {
+	offset, err := p.queries.GetProjectorOffset(ctx)
+	if err != nil {
+		log.Println("Projector: 永続化オフセットなし（初回起動）、全イベントを処理します")
+		return
+	}
+	p.mu.Lock()
+	p.lastTimestamp = offset
+	p.mu.Unlock()
+	log.Printf("Projector: 永続化オフセットを復元しました: %s", offset.Format(time.RFC3339))
 }
 
 // Stop はバックグラウンドのポーリングを停止する。
@@ -126,10 +142,16 @@ func (p *Projector) poll(ctx context.Context) error {
 	}
 
 	if !latestTimestamp.IsZero() {
+		newOffset := latestTimestamp.Add(1 * time.Nanosecond)
 		p.mu.Lock()
 		// 同じイベントを再取得しないように1ナノ秒進める
-		p.lastTimestamp = latestTimestamp.Add(1 * time.Nanosecond)
+		p.lastTimestamp = newOffset
 		p.mu.Unlock()
+
+		// オフセットを永続化する
+		if err := p.queries.UpsertProjectorOffset(ctx, newOffset); err != nil {
+			log.Printf("Projector: オフセット永続化エラー: %v", err)
+		}
 	}
 
 	log.Printf("Projector: %d件のイベントを処理しました", len(events))
@@ -276,9 +298,15 @@ func (p *Projector) RebuildFromEventStore(ctx context.Context) error {
 	if len(events) > 0 {
 		lastEvent := events[len(events)-1]
 		if createdAt, err := time.Parse(time.RFC3339, lastEvent.CreatedAt); err == nil {
+			newOffset := createdAt.Add(1 * time.Nanosecond)
 			p.mu.Lock()
-			p.lastTimestamp = createdAt.Add(1 * time.Nanosecond)
+			p.lastTimestamp = newOffset
 			p.mu.Unlock()
+
+			// 再構築後のオフセットを永続化する
+			if err := p.queries.UpsertProjectorOffset(ctx, newOffset); err != nil {
+				log.Printf("Projector: オフセット永続化エラー: %v", err)
+			}
 		}
 	}
 

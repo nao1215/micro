@@ -38,6 +38,10 @@ CREATE TABLE IF NOT EXISTS saga_steps (
     started_at DATETIME,
     -- 完了日時
     completed_at DATETIME,
+    -- リトライ回数
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    -- 最後のエラーメッセージ
+    last_error TEXT NOT NULL DEFAULT '',
     FOREIGN KEY (saga_id) REFERENCES sagas(id) ON DELETE CASCADE
 );
 
@@ -52,3 +56,10 @@ CREATE INDEX IF NOT EXISTS idx_sagas_type
 -- Sagaステップの所属Saga検索を高速化するインデックス。
 CREATE INDEX IF NOT EXISTS idx_saga_steps_saga_id
     ON saga_steps(saga_id);
+
+-- Orchestratorのオフセット（最後にポーリングしたイベントのタイムスタンプ）を永続化するテーブル。
+CREATE TABLE IF NOT EXISTS projector_offsets (
+    id TEXT PRIMARY KEY DEFAULT 'default',
+    last_timestamp DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL DEFAULT (datetime('now'))
+);

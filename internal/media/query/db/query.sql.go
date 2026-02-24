@@ -50,6 +50,17 @@ func (q *Queries) GetMediaByID(ctx context.Context, id string) (MediaReadModel, 
 	return i, err
 }
 
+const getProjectorOffset = `-- name: GetProjectorOffset :one
+SELECT last_timestamp FROM projector_offsets WHERE id = 'default'
+`
+
+func (q *Queries) GetProjectorOffset(ctx context.Context) (time.Time, error) {
+	row := q.db.QueryRowContext(ctx, getProjectorOffset)
+	var last_timestamp time.Time
+	err := row.Scan(&last_timestamp)
+	return last_timestamp, err
+}
+
 const listAllMedia = `-- name: ListAllMedia :many
 SELECT id, user_id, filename, content_type, size, storage_path,
        thumbnail_path, width, height, duration_seconds,
@@ -276,5 +287,16 @@ func (q *Queries) UpsertMediaReadModel(ctx context.Context, arg UpsertMediaReadM
 		arg.LastEventVersion,
 		arg.UploadedAt,
 	)
+	return err
+}
+
+const upsertProjectorOffset = `-- name: UpsertProjectorOffset :exec
+INSERT INTO projector_offsets (id, last_timestamp, updated_at)
+VALUES ('default', ?, datetime('now'))
+ON CONFLICT(id) DO UPDATE SET last_timestamp = excluded.last_timestamp, updated_at = datetime('now')
+`
+
+func (q *Queries) UpsertProjectorOffset(ctx context.Context, lastTimestamp time.Time) error {
+	_, err := q.db.ExecContext(ctx, upsertProjectorOffset, lastTimestamp)
 	return err
 }
