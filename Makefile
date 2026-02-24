@@ -1,4 +1,4 @@
-.PHONY: build test lint generate docker-up docker-down clean tools help
+.PHONY: build test lint generate docker-up docker-down clean tools help e2e
 
 # サービス一覧
 SERVICES := gateway media-command media-query album eventstore saga notification
@@ -40,6 +40,9 @@ docker-down: ## Docker Composeで全サービス停止
 docker-logs: ## Docker Composeのログを表示
 	docker compose logs -f
 
+e2e: ## E2Eテスト実行（要: make docker-up 済み、runn インストール済み）
+	runn run e2e/testdata/**/*.yml
+
 clean: ## 生成ファイル削除
 	rm -rf $(BIN_DIR)
 	rm -f cover.out cover.html
@@ -49,6 +52,7 @@ tools: ## 開発ツールのインストール
 	go install github.com/golangci-lint/golangci-lint/v2/cmd/golangci-lint@latest
 	go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest
 	go install github.com/k1LoW/octocov@latest
+	go install github.com/k1LoW/runn/cmd/runn@latest
 
 fmt: ## コードフォーマット
 	go fmt ./...

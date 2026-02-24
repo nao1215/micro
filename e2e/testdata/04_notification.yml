@@ -1,0 +1,24 @@
+desc: 通知一覧取得
+runners:
+  gateway: http://localhost:8080
+steps:
+  login:
+    desc: ログイン
+    gateway:
+      /auth/dev-token:
+        post:
+          body:
+            application/json: {}
+    test: |
+      current.res.status == 200
+    bind:
+      token: current.res.body.token
+  listNotifications:
+    desc: 通知一覧を取得する（初期状態は空）
+    gateway:
+      /api/v1/notifications:
+        get:
+          headers:
+            Authorization: "Bearer {{token}}"
+    test: |
+      current.res.status == 200 && len(current.res.body) == 0

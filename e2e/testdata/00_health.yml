@@ -1,0 +1,11 @@
+desc: Gatewayヘルスチェック
+runners:
+  gateway: http://localhost:8080
+steps:
+  health:
+    gateway:
+      /health:
+        get:
+          body: null
+    test: |
+      current.res.status == 200 && current.res.body.status == "ok" && current.res.body.service == "gateway"

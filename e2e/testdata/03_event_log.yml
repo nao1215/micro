@@ -1,0 +1,37 @@
+desc: イベントログ確認
+runners:
+  gateway: http://localhost:8080
+steps:
+  login:
+    desc: ログイン
+    gateway:
+      /auth/dev-token:
+        post:
+          body:
+            application/json: {}
+    test: |
+      current.res.status == 200
+    bind:
+      token: current.res.body.token
+  createAlbumForEvent:
+    desc: イベント生成のためにアルバムを作成する
+    gateway:
+      /api/v1/albums:
+        post:
+          headers:
+            Authorization: "Bearer {{token}}"
+          body:
+            application/json:
+              name: "イベントテスト用"
+              description: "イベントログ確認用"
+    test: |
+      current.res.status == 201
+  getEvents:
+    desc: イベントログを取得する
+    gateway:
+      /api/v1/events:
+        get:
+          headers:
+            Authorization: "Bearer {{token}}"
+    test: |
+      current.res.status == 200 && len(current.res.body) >= 1

@@ -1,0 +1,67 @@
+desc: アルバムCRUD操作
+runners:
+  gateway: http://localhost:8080
+steps:
+  login:
+    desc: ログイン
+    gateway:
+      /auth/dev-token:
+        post:
+          body:
+            application/json: {}
+    test: |
+      current.res.status == 200
+    bind:
+      token: current.res.body.token
+      userId: current.res.body.user_id
+  createAlbum:
+    desc: アルバムを作成する
+    gateway:
+      /api/v1/albums:
+        post:
+          headers:
+            Authorization: "Bearer {{token}}"
+          body:
+            application/json:
+              name: "テストアルバム"
+              description: "E2Eテスト用アルバム"
+    test: |
+      current.res.status == 201 && current.res.body.name == "テストアルバム" && current.res.body.description == "E2Eテスト用アルバム" && current.res.body.user_id == userId && current.res.body.id != ""
+    bind:
+      albumId: current.res.body.id
+  listAlbums:
+    desc: アルバム一覧を取得する
+    gateway:
+      /api/v1/albums:
+        get:
+          headers:
+            Authorization: "Bearer {{token}}"
+    test: |
+      current.res.status == 200 && len(current.res.body) >= 1
+  getAlbum:
+    desc: アルバム詳細を取得する
+    gateway:
+      /api/v1/albums/{{albumId}}:
+        get:
+          headers:
+            Authorization: "Bearer {{token}}"
+    test: |
+      current.res.status == 200 && current.res.body.id == albumId && current.res.body.name == "テストアルバム"
+  deleteAlbum:
+    desc: アルバムを削除する
+    gateway:
+      /api/v1/albums/{{albumId}}:
+        delete:
+          headers:
+            Authorization: "Bearer {{token}}"
+    test: |
+      current.res.status == 200
+  verifyDeletion:
+    desc: 削除されたアルバムが取得できないことを確認する
+    gateway:
+      /api/v1/albums/{{albumId}}:
+        get:
+          headers:
+            Authorization: "Bearer {{token}}"
+    test: |
+      current.res.status == 404

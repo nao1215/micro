@@ -1,0 +1,25 @@
+desc: 認証フローとユーザー情報取得
+runners:
+  gateway: http://localhost:8080
+steps:
+  devTokenLogin:
+    desc: 開発用トークンを取得する
+    gateway:
+      /auth/dev-token:
+        post:
+          body:
+            application/json: {}
+    test: |
+      current.res.status == 200 && current.res.body.token != "" && current.res.body.user_id != ""
+    bind:
+      token: current.res.body.token
+      userId: current.res.body.user_id
+  getCurrentUser:
+    desc: 認証済みユーザー情報を取得する
+    gateway:
+      /api/v1/me:
+        get:
+          headers:
+            Authorization: "Bearer {{token}}"
+    test: |
+      current.res.status == 200 && current.res.body.id == userId && current.res.body.email == "dev@localhost" && current.res.body.display_name == "開発ユーザー"
