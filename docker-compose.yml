@@ -1,0 +1,165 @@
+# MediaHub - ローカル専用マイクロサービス構成
+# CQRS, Event Sourcing, Saga Pattern の学習用
+
+services:
+  # API Gateway - OAuth2認証、JWT発行、リクエストルーティング
+  gateway:
+    build:
+      context: .
+      dockerfile: docker/gateway.Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - JWT_SECRET=${JWT_SECRET}
+      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}
+      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - EVENTSTORE_URL=http://eventstore:8084
+      - MEDIA_COMMAND_URL=http://media-command:8081
+      - MEDIA_QUERY_URL=http://media-query:8082
+      - ALBUM_URL=http://album:8083
+      - FRONTEND_URL=http://localhost:3000
+    volumes:
+      - gateway-data:/data
+    depends_on:
+      - eventstore
+    networks:
+      - mediahub
+
+  # Media Command - メディアのアップロード・更新・削除（CQRS Command側）
+  media-command:
+    build:
+      context: .
+      dockerfile: docker/media-command.Dockerfile
+    ports:
+      - "8081:8081"
+    environment:
+      - PORT=8081
+      - JWT_SECRET=${JWT_SECRET}
+      - EVENTSTORE_URL=http://eventstore:8084
+    volumes:
+      - media-files:/data/media
+    depends_on:
+      - eventstore
+    networks:
+      - mediahub
+
+  # Media Query - メディアの一覧・詳細・検索（CQRS Query側、Read Model）
+  media-query:
+    build:
+      context: .
+      dockerfile: docker/media-query.Dockerfile
+    ports:
+      - "8082:8082"
+    environment:
+      - PORT=8082
+      - JWT_SECRET=${JWT_SECRET}
+      - EVENTSTORE_URL=http://eventstore:8084
+    volumes:
+      - media-query-data:/data
+    depends_on:
+      - eventstore
+    networks:
+      - mediahub
+
+  # Album - アルバム管理、メディアとの関連付け
+  album:
+    build:
+      context: .
+      dockerfile: docker/album.Dockerfile
+    ports:
+      - "8083:8083"
+    environment:
+      - PORT=8083
+      - JWT_SECRET=${JWT_SECRET}
+      - EVENTSTORE_URL=http://eventstore:8084
+    volumes:
+      - album-data:/data
+    depends_on:
+      - eventstore
+    networks:
+      - mediahub
+
+  # Event Store - イベントの永続化と配信
+  eventstore:
+    build:
+      context: .
+      dockerfile: docker/eventstore.Dockerfile
+    ports:
+      - "8084:8084"
+    environment:
+      - PORT=8084
+      - JWT_SECRET=${JWT_SECRET}
+    volumes:
+      - eventstore-data:/data
+    networks:
+      - mediahub
+
+  # Saga Orchestrator - 分散トランザクションの調整
+  saga:
+    build:
+      context: .
+      dockerfile: docker/saga.Dockerfile
+    ports:
+      - "8085:8085"
+    environment:
+      - PORT=8085
+      - JWT_SECRET=${JWT_SECRET}
+      - EVENTSTORE_URL=http://eventstore:8084
+      - MEDIA_COMMAND_URL=http://media-command:8081
+      - ALBUM_URL=http://album:8083
+      - NOTIFICATION_URL=http://notification:8086
+    volumes:
+      - saga-data:/data
+    depends_on:
+      - eventstore
+      - media-command
+      - album
+      - notification
+    networks:
+      - mediahub
+
+  # Notification - イベント駆動の通知サービス
+  notification:
+    build:
+      context: .
+      dockerfile: docker/notification.Dockerfile
+    ports:
+      - "8086:8086"
+    environment:
+      - PORT=8086
+      - JWT_SECRET=${JWT_SECRET}
+      - EVENTSTORE_URL=http://eventstore:8084
+    volumes:
+      - notification-data:/data
+    depends_on:
+      - eventstore
+    networks:
+      - mediahub
+
+  # Frontend - 簡素なWeb UI（デバッグ用）
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend.Dockerfile
+    ports:
+      - "3000:80"
+    depends_on:
+      - gateway
+    networks:
+      - mediahub
+
+volumes:
+  gateway-data:
+  media-files:
+  media-query-data:
+  album-data:
+  eventstore-data:
+  saga-data:
+  notification-data:
+
+networks:
+  mediahub:
+    driver: bridge

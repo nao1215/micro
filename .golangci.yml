@@ -1,0 +1,28 @@
+version: "2"
+
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - errcheck
+    - errorlint
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gosimple
+    - gocritic
+    - gofmt
+    - misspell
+
+formatters:
+  enable:
+    - gofmt
+
+issues:
+  exclude-dirs:
+    - internal/*/db  # sqlcが自動生成するコード

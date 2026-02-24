@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MediaHub - デバッグUI</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f5f5f5; color: #333; }
+        .header { background: #2c3e50; color: white; padding: 1rem 2rem; display: flex; justify-content: space-between; align-items: center; }
+        .header h1 { font-size: 1.5rem; }
+        .header .user-info { font-size: 0.9rem; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 2rem; }
+        .auth-section { text-align: center; padding: 4rem 2rem; }
+        .auth-section h2 { margin-bottom: 1rem; }
+        .btn { display: inline-block; padding: 0.5rem 1.5rem; border: none; border-radius: 4px; cursor: pointer; font-size: 0.9rem; text-decoration: none; margin: 0.25rem; }
+        .btn-primary { background: #3498db; color: white; }
+        .btn-danger { background: #e74c3c; color: white; }
+        .btn-github { background: #333; color: white; }
+        .btn-google { background: #dd4b39; color: white; }
+        .tabs { display: flex; gap: 0; margin-bottom: 1rem; border-bottom: 2px solid #ddd; }
+        .tab { padding: 0.75rem 1.5rem; cursor: pointer; border: none; background: none; font-size: 1rem; border-bottom: 2px solid transparent; margin-bottom: -2px; }
+        .tab.active { border-bottom-color: #3498db; color: #3498db; font-weight: bold; }
+        .panel { display: none; }
+        .panel.active { display: block; }
+        .card { background: white; border-radius: 8px; padding: 1.5rem; margin-bottom: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .card h3 { margin-bottom: 0.5rem; }
+        .upload-area { border: 2px dashed #ccc; padding: 2rem; text-align: center; border-radius: 8px; margin-bottom: 1rem; cursor: pointer; }
+        .upload-area:hover { border-color: #3498db; background: #f0f7ff; }
+        .media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1rem; }
+        .media-item { background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .media-item img { width: 100%; height: 150px; object-fit: cover; }
+        .media-item .info { padding: 0.75rem; }
+        .media-item .info .name { font-weight: bold; font-size: 0.85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .media-item .info .meta { font-size: 0.75rem; color: #888; margin-top: 0.25rem; }
+        .status-badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 12px; font-size: 0.7rem; font-weight: bold; }
+        .status-uploaded { background: #fff3cd; color: #856404; }
+        .status-processed { background: #d4edda; color: #155724; }
+        .status-failed { background: #f8d7da; color: #721c24; }
+        .saga-step { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0; border-bottom: 1px solid #eee; }
+        .saga-step:last-child { border-bottom: none; }
+        .step-icon { width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.7rem; color: white; }
+        .step-completed { background: #27ae60; }
+        .step-failed { background: #e74c3c; }
+        .step-pending { background: #bdc3c7; }
+        .step-executing { background: #f39c12; }
+        .notification-item { display: flex; align-items: flex-start; gap: 0.75rem; padding: 0.75rem; border-bottom: 1px solid #eee; }
+        .notification-item.unread { background: #f0f7ff; }
+        .notification-dot { width: 8px; height: 8px; border-radius: 50%; background: #3498db; margin-top: 0.4rem; flex-shrink: 0; }
+        .notification-dot.read { background: transparent; }
+        .events-log { max-height: 400px; overflow-y: auto; font-family: monospace; font-size: 0.8rem; }
+        .event-row { padding: 0.5rem; border-bottom: 1px solid #eee; }
+        .event-type { font-weight: bold; color: #2c3e50; }
+        .event-time { color: #888; font-size: 0.75rem; }
+        #status-bar { position: fixed; bottom: 0; left: 0; right: 0; background: #2c3e50; color: #aaa; padding: 0.25rem 1rem; font-size: 0.75rem; display: flex; justify-content: space-between; }
+    </style>
+</head>
+<body>
+    <!-- 認証前画面 -->
+    <div id="auth-view">
+        <div class="header">
+            <h1>MediaHub</h1>
+        </div>
+        <div class="container">
+            <div class="auth-section">
+                <h2>ログイン</h2>
+                <p style="margin-bottom: 2rem; color: #666;">CQRS / Event Sourcing / Saga Pattern 学習用メディア管理プラットフォーム</p>
+                <div>
+                    <a href="/auth/github" class="btn btn-github">GitHub でログイン</a>
+                    <a href="/auth/google" class="btn btn-google">Google でログイン</a>
+                </div>
+                <p style="margin-top: 2rem; font-size: 0.85rem; color: #999;">
+                    ※ デバッグ用:
+                    <button class="btn btn-primary" onclick="devLogin()">開発モードでログイン</button>
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <!-- 認証後画面 -->
+    <div id="main-view" style="display: none;">
+        <div class="header">
+            <h1>MediaHub</h1>
+            <div class="user-info">
+                <span id="user-name"></span>
+                <button class="btn btn-danger" onclick="logout()" style="margin-left: 0.5rem; padding: 0.25rem 0.75rem; font-size: 0.8rem;">ログアウト</button>
+            </div>
+        </div>
+        <div class="container">
+            <div class="tabs">
+                <button class="tab active" onclick="switchTab('media')">メディア</button>
+                <button class="tab" onclick="switchTab('albums')">アルバム</button>
+                <button class="tab" onclick="switchTab('sagas')">Saga監視</button>
+                <button class="tab" onclick="switchTab('events')">イベントログ</button>
+                <button class="tab" onclick="switchTab('notifications')">通知</button>
+            </div>
+
+            <!-- メディアパネル -->
+            <div id="panel-media" class="panel active">
+                <div class="upload-area" id="upload-area" onclick="document.getElementById('file-input').click()">
+                    <p>クリックまたはドラッグ＆ドロップでファイルをアップロード</p>
+                    <p style="font-size: 0.8rem; color: #999; margin-top: 0.5rem;">画像・動画ファイル（最大50MB）</p>
+                    <input type="file" id="file-input" style="display:none" accept="image/*,video/*" onchange="uploadFile(this.files[0])">
+                </div>
+                <div class="media-grid" id="media-grid">
+                    <p style="color: #999; grid-column: 1/-1; text-align: center; padding: 2rem;">メディアがありません</p>
+                </div>
+            </div>
+
+            <!-- アルバムパネル -->
+            <div id="panel-albums" class="panel">
+                <div class="card">
+                    <h3>アルバム一覧</h3>
+                    <div id="album-list">
+                        <p style="color: #999; text-align: center; padding: 2rem;">アルバムがありません</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Saga監視パネル -->
+            <div id="panel-sagas" class="panel">
+                <div class="card">
+                    <h3>アクティブなSaga</h3>
+                    <p style="font-size: 0.85rem; color: #666; margin-bottom: 1rem;">
+                        メディアアップロードの進行状況をリアルタイムで監視できます。
+                    </p>
+                    <div id="saga-list">
+                        <p style="color: #999; text-align: center; padding: 2rem;">アクティブなSagaはありません</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- イベントログパネル -->
+            <div id="panel-events" class="panel">
+                <div class="card">
+                    <h3>イベントストア（直近のイベント）</h3>
+                    <p style="font-size: 0.85rem; color: #666; margin-bottom: 1rem;">
+                        Event Sourcingで記録されたすべてのイベントを閲覧できます。
+                    </p>
+                    <div class="events-log" id="events-log">
+                        <p style="color: #999; text-align: center; padding: 2rem;">イベントがありません</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 通知パネル -->
+            <div id="panel-notifications" class="panel">
+                <div class="card">
+                    <h3>通知</h3>
+                    <div id="notification-list">
+                        <p style="color: #999; text-align: center; padding: 2rem;">通知がありません</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="status-bar">
+        <span>MediaHub v0.1.0 - CQRS / Event Sourcing / Saga Pattern 学習プラットフォーム</span>
+        <span id="connection-status">Gateway: 未接続</span>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8080/api/v1';
+        let token = localStorage.getItem('token');
+
+        // ページ読み込み時の初期化
+        document.addEventListener('DOMContentLoaded', () => {
+            if (token) {
+                showMainView();
+                checkHealth();
+            }
+        });
+
+        // 開発モードログイン（デバッグ用）
+        function devLogin() {
+            // TODO: Gateway実装後にdev-tokenエンドポイントを使用する
+            token = 'dev-token';
+            localStorage.setItem('token', token);
+            showMainView();
+        }
+
+        function logout() {
+            token = null;
+            localStorage.removeItem('token');
+            document.getElementById('auth-view').style.display = '';
+            document.getElementById('main-view').style.display = 'none';
+        }
+
+        function showMainView() {
+            document.getElementById('auth-view').style.display = 'none';
+            document.getElementById('main-view').style.display = '';
+            document.getElementById('user-name').textContent = '開発ユーザー';
+        }
+
+        // タブ切り替え
+        function switchTab(name) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+            event.target.classList.add('active');
+            document.getElementById('panel-' + name).classList.add('active');
+        }
+
+        // ファイルアップロード
+        async function uploadFile(file) {
+            if (!file) return;
+            const formData = new FormData();
+            formData.append('file', file);
+            try {
+                const res = await fetch(API_BASE + '/media', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token },
+                    body: formData,
+                });
+                if (res.ok) {
+                    alert('アップロード成功！Saga処理が開始されます。');
+                    loadMedia();
+                } else {
+                    const err = await res.json();
+                    alert('アップロード失敗: ' + (err.error || res.statusText));
+                }
+            } catch (e) {
+                alert('通信エラー: ' + e.message);
+            }
+        }
+
+        // メディア一覧読み込み
+        async function loadMedia() {
+            try {
+                const res = await fetch(API_BASE + '/media', {
+                    headers: { 'Authorization': 'Bearer ' + token },
+                });
+                if (!res.ok) return;
+                const data = await res.json();
+                renderMediaGrid(data);
+            } catch (e) {
+                console.error('メディア取得エラー:', e);
+            }
+        }
+
+        function renderMediaGrid(items) {
+            const grid = document.getElementById('media-grid');
+            if (!items || items.length === 0) {
+                grid.innerHTML = '<p style="color: #999; grid-column: 1/-1; text-align: center; padding: 2rem;">メディアがありません</p>';
+                return;
+            }
+            grid.innerHTML = items.map(item => `
+                <div class="media-item">
+                    <img src="${item.thumbnail_path || '/static/placeholder.svg'}" alt="${item.filename}">
+                    <div class="info">
+                        <div class="name">${item.filename}</div>
+                        <div class="meta">
+                            <span class="status-badge status-${item.status}">${item.status}</span>
+                            ${formatFileSize(item.size)}
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function formatFileSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / 1048576).toFixed(1) + ' MB';
+        }
+
+        // ヘルスチェック
+        async function checkHealth() {
+            try {
+                const res = await fetch('http://localhost:8080/health');
+                if (res.ok) {
+                    document.getElementById('connection-status').textContent = 'Gateway: 接続中';
+                    document.getElementById('connection-status').style.color = '#2ecc71';
+                }
+            } catch {
+                document.getElementById('connection-status').textContent = 'Gateway: 未接続';
+                document.getElementById('connection-status').style.color = '#e74c3c';
+            }
+        }
+
+        // ドラッグ＆ドロップ対応
+        const uploadArea = document.getElementById('upload-area');
+        if (uploadArea) {
+            uploadArea.addEventListener('dragover', e => { e.preventDefault(); uploadArea.style.borderColor = '#3498db'; });
+            uploadArea.addEventListener('dragleave', () => { uploadArea.style.borderColor = '#ccc'; });
+            uploadArea.addEventListener('drop', e => {
+                e.preventDefault();
+                uploadArea.style.borderColor = '#ccc';
+                if (e.dataTransfer.files.length > 0) uploadFile(e.dataTransfer.files[0]);
+            });
+        }
+
+        // 定期的にヘルスチェック
+        setInterval(checkHealth, 10000);
+    </script>
+</body>
+</html>
