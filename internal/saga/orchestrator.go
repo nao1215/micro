@@ -174,9 +174,16 @@ func (o *Orchestrator) startMediaUploadSaga(ctx context.Context, aggregateID, da
 
 	// Step: サムネイル生成を依頼
 	o.executeStep(ctx, sagaID, "process_media", func() error {
+		// イベントデータからstorage_pathを取得する
+		var uploadData event.MediaUploadedData
+		if err := json.Unmarshal([]byte(data), &uploadData); err != nil {
+			return fmt.Errorf("アップロードデータのパースに失敗: %w", err)
+		}
+
 		// media-commandの /api/v1/media/{id}/process を呼び出す
 		mediaID := extractMediaID(aggregateID)
-		return o.mediaCommandClient.PostJSON(ctx, fmt.Sprintf("/api/v1/media/%s/process", mediaID), nil, nil)
+		reqBody := map[string]string{"storage_path": uploadData.StoragePath}
+		return o.mediaCommandClient.PostJSON(ctx, fmt.Sprintf("/api/v1/media/%s/process", mediaID), reqBody, nil)
 	})
 }
 

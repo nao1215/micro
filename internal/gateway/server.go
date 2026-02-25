@@ -39,6 +39,7 @@ type serviceURLConfig struct {
 	Album        string
 	Notification string
 	EventStore   string
+	Saga         string
 }
 
 // NewServer は新しいGatewayサーバーを生成する。
@@ -63,6 +64,7 @@ func NewServer(port string) (*Server, error) {
 		Album:        getEnvOr("ALBUM_URL", "http://localhost:8083"),
 		Notification: getEnvOr("NOTIFICATION_URL", "http://localhost:8086"),
 		EventStore:   getEnvOr("EVENTSTORE_URL", "http://localhost:8084"),
+		Saga:         getEnvOr("SAGA_URL", "http://localhost:8085"),
 	}
 
 	frontendURL := getEnvOr("FRONTEND_URL", "http://localhost:3000")
@@ -129,7 +131,7 @@ func (s *Server) setupRoutes() {
 		api.PUT("/notifications/:id/read", s.handleProxyWithParam(s.serviceURLs.Notification, "/api/v1/notifications/", "id", "/read"))
 
 		// Saga監視
-		api.GET("/sagas", s.handleProxy(getEnvOr("SAGA_URL", "http://localhost:8085"), "/api/v1/sagas"))
+		api.GET("/sagas", s.handleProxy(s.serviceURLs.Saga, "/api/v1/sagas"))
 
 		// イベントログ
 		api.GET("/events", s.handleProxy(s.serviceURLs.EventStore, "/api/v1/events"))

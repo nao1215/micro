@@ -21,6 +21,7 @@ services:
       - MEDIA_QUERY_URL=http://media-query:8082
       - ALBUM_URL=http://album:8083
       - NOTIFICATION_URL=http://notification:8086
+      - SAGA_URL=http://saga:8085
       - FRONTEND_URL=http://localhost:3000
     volumes:
       - gateway-data:/data

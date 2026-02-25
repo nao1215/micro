@@ -92,15 +92,19 @@ func (s *Server) setupRoutes() {
 			media.POST("", s.handleUpload())
 			// メディアの削除
 			media.DELETE("/:id", s.handleDelete())
-			// サムネイル生成（内部API - Sagaから呼び出される）
-			media.POST("/:id/process", s.handleProcess())
-			// 補償アクション: アップロード済みメディアの無効化（内部API）
-			media.POST("/:id/compensate", s.handleCompensate())
 		}
 	}
 
-	// サムネイル画像の取得（認証不要 - img要素から直接参照されるため）
-	s.router.GET("/api/v1/media/:id/thumbnail", s.handleThumbnail())
+	// 以下は認証不要の内部API（Sagaサービスやブラウザから直接呼ばれるため）
+	internal := s.router.Group("/api/v1/media")
+	{
+		// サムネイル画像の取得（img要素から直接参照される）
+		internal.GET("/:id/thumbnail", s.handleThumbnail())
+		// サムネイル生成（Sagaから呼び出される内部API）
+		internal.POST("/:id/process", s.handleProcess())
+		// 補償アクション: アップロード済みメディアの無効化（Sagaから呼び出される内部API）
+		internal.POST("/:id/compensate", s.handleCompensate())
+	}
 
 	// ヘルスチェック
 	s.router.GET("/health", func(c *gin.Context) {
@@ -283,6 +287,8 @@ func (s *Server) handleDelete() gin.HandlerFunc {
 
 // handleThumbnail はサムネイル画像を返すハンドラを返す。
 // メディアIDからサムネイルファイルのパスを特定し、JPEG画像として返す。
+// URLパスのIDはaggregate ID（"media-{uuid}"形式）だが、
+// ファイル保存ディレクトリはUUID部分のみのため、プレフィックスを除去する。
 func (s *Server) handleThumbnail() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		mediaID := c.Param("id")
@@ -291,7 +297,9 @@ func (s *Server) handleThumbnail() gin.HandlerFunc {
 			return
 		}
 
-		thumbnailPath := filepath.Join(mediaBaseDir, mediaID, "thumbnail.jpg")
+		// aggregate IDの"media-"プレフィックスを除去してディレクトリ名にする
+		dirName := strings.TrimPrefix(mediaID, "media-")
+		thumbnailPath := filepath.Join(mediaBaseDir, dirName, "thumbnail.jpg")
 		if _, err := os.Stat(thumbnailPath); os.IsNotExist(err) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "サムネイルが見つかりません"})
 			return
