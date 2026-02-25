@@ -7,9 +7,11 @@ import (
 	"image/color"
 	"image/draw"
 	"image/jpeg"
-	// image/png と image/gif はデコード用に副作用インポートする。
+	// image/png、image/gif、webp はデコード用に副作用インポートする。
 	_ "image/gif"
 	_ "image/png"
+
+	_ "golang.org/x/image/webp"
 	"io"
 	"log"
 	"math"
@@ -313,6 +315,8 @@ func (s *Server) handleThumbnail() gin.HandlerFunc {
 type processRequest struct {
 	// StoragePath は処理対象のメディアファイルの保存パス。
 	StoragePath string `json:"storage_path" binding:"required"`
+	// ContentType はファイルのMIMEタイプ。動画の場合サムネイル生成をスキップする。
+	ContentType string `json:"content_type"`
 }
 
 // handleProcess はサムネイル生成を処理するハンドラを返す。
@@ -333,6 +337,22 @@ func (s *Server) handleProcess() gin.HandlerFunc {
 		}
 
 		aggregateID := fmt.Sprintf("media-%s", mediaID)
+
+		// 動画ファイルの場合はサムネイル生成をスキップし、
+		// MediaProcessedイベントのみ発行して処理完了とする。
+		if strings.HasPrefix(strings.ToLower(req.ContentType), "video/") {
+			eventData := event.MediaProcessedData{}
+			if err := s.emitEvent(c, aggregateID, event.TypeMediaProcessed, eventData); err != nil {
+				log.Printf("MediaProcessedイベントの送信に失敗: %v", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "イベントの送信に失敗しました"})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{
+				"message":  "動画ファイルのため、サムネイル生成をスキップしました",
+				"media_id": mediaID,
+			})
+			return
+		}
 
 		// 元ファイルを開く。
 		srcFile, err := os.Open(req.StoragePath)

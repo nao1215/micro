@@ -182,7 +182,10 @@ func (o *Orchestrator) startMediaUploadSaga(ctx context.Context, aggregateID, da
 
 		// media-commandの /api/v1/media/{id}/process を呼び出す
 		mediaID := extractMediaID(aggregateID)
-		reqBody := map[string]string{"storage_path": uploadData.StoragePath}
+		reqBody := map[string]string{
+			"storage_path": uploadData.StoragePath,
+			"content_type": uploadData.ContentType,
+		}
 		return o.mediaCommandClient.PostJSON(ctx, fmt.Sprintf("/api/v1/media/%s/process", mediaID), reqBody, nil)
 	})
 }
