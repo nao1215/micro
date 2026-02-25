@@ -99,6 +99,9 @@ func (s *Server) setupRoutes() {
 		}
 	}
 
+	// サムネイル画像の取得（認証不要 - img要素から直接参照されるため）
+	s.router.GET("/api/v1/media/:id/thumbnail", s.handleThumbnail())
+
 	// ヘルスチェック
 	s.router.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok", "service": "media-command"})
@@ -275,6 +278,26 @@ func (s *Server) handleDelete() gin.HandlerFunc {
 			"message":  "メディアを削除しました",
 			"media_id": mediaID,
 		})
+	}
+}
+
+// handleThumbnail はサムネイル画像を返すハンドラを返す。
+// メディアIDからサムネイルファイルのパスを特定し、JPEG画像として返す。
+func (s *Server) handleThumbnail() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		mediaID := c.Param("id")
+		if mediaID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "メディアIDが指定されていません"})
+			return
+		}
+
+		thumbnailPath := filepath.Join(mediaBaseDir, mediaID, "thumbnail.jpg")
+		if _, err := os.Stat(thumbnailPath); os.IsNotExist(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "サムネイルが見つかりません"})
+			return
+		}
+
+		c.File(thumbnailPath)
 	}
 }
 

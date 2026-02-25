@@ -309,7 +309,7 @@
             }
             grid.innerHTML = items.map(item => `
                 <div class="media-item">
-                    <img src="${escapeHtml(item.thumbnail_path || '')}" alt="${escapeHtml(item.filename || '')}"
+                    <img src="${item.id ? API_BASE + '/media/' + encodeURIComponent(item.id) + '/thumbnail' : ''}" alt="${escapeHtml(item.filename || '')}"
                          onerror="this.style.background='#eee';this.style.display='flex';this.alt='No thumbnail'">
                     <div class="info">
                         <div class="name">${escapeHtml(item.filename || item.id || '')}</div>

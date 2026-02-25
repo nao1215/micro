@@ -135,6 +135,9 @@ func (s *Server) setupRoutes() {
 		api.GET("/events", s.handleProxy(s.serviceURLs.EventStore, "/api/v1/events"))
 	}
 
+	// サムネイル画像の取得（認証不要 - img要素から直接参照されるため）
+	s.router.GET("/api/v1/media/:id/thumbnail", s.handleProxyWithParam(s.serviceURLs.MediaCommand, "/api/v1/media/", "id", "/thumbnail"))
+
 	// ヘルスチェック
 	s.router.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok", "service": "gateway"})
